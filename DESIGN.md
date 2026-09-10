@@ -393,3 +393,29 @@ GPL-3.0-or-later. 프로토콜 구현이 turing-smart-screen-python(GPL-3.0-or-l
 **배경 소재**
 
 - [Envato Elements — Motion Graphics Backgrounds](https://elements.envato.com/stock-video/motion-graphics/backgrounds)
+
+---
+
+## 7. 구현 착수 순서
+
+설계 단계는 끝났다. 구현은 아직 한 줄도 시작하지 않았다
+(`internal/turzx/`의 프로토콜 구현은 포팅 비용을 재려고 먼저 쓴 것이다).
+
+**선행 — 사무실 Windows PC 환경 확인.** 6절의 Windows 항목들이 인코더와 센서 소스를
+결정하므로 다른 작업의 전제가 된다. 장치를 그 PC에 연결해 flush 타임아웃을 다시 재고,
+gopsutil의 WMI 서멀존이 값을 주는지, 어느 하드웨어 인코더를 쓸 수 있는지 확인한다.
+
+**병렬 — 디자인 마일스톤.** 첫 테마의 레이아웃·색·타이포그래피·가독성 처리를 정한다.
+이 저장소에 등장하는 화면은 전부 측정용 샘플이며 참고 대상이 아니다.
+
+**구현 순서.** 의존 방향의 말단부터 올라간다.
+
+1. `internal/metric/` — 지표 레지스트리와 수집기. 장치 없이 개발·테스트할 수 있고
+   Claude·Codex 경로는 이미 검증됐다.
+2. `internal/turzx/` — 프로토콜 위에 USB 전송을 얹어 드라이버를 완성한다.
+   2절의 함정을 코드로 강제한다(RGBA 검증, 응답 읽기, 시작 시 큐 비우기).
+3. `internal/render/` — 렌더 계획 실행. ffmpeg 파이프라인과 낱장 PNG 두 경로.
+4. `internal/theme/` — 테마 파일 포맷을 정하고 파서와 렌더 계획 생성을 만든다.
+5. `internal/daemon/`, `internal/ui/` — 생명주기와 트레이·설정 화면.
+
+**테마 파일 포맷은 아직 정하지 않았다.** 4단계에서 결정한다.
