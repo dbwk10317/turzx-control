@@ -13,7 +13,7 @@ ep_in  = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint
 W, H = 1920, 462
 
 def frame(i):
-    img = Image.new("RGB", (W, H))
+    img = Image.new("RGBA", (W, H), (8,10,16,255))
     d = ImageDraw.Draw(img)
     for x in range(0, W, 8):
         v = (x + i*24) % 512; v = v if v < 256 else 511-v
