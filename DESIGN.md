@@ -127,7 +127,32 @@ USB 벌크로 밀어 넣는 장치다. 신호가 없으면 색 로테이션 데�
 
 Keychain OAuth나 비공개 엔드포인트는 필요 없다.
 
-**신선도.** 두 값 모두 해당 머신이 마지막으로 API를 호출한 시점의 **계정 단위 스냅샷**이다.
+### 시스템 센서
+
+**`gopsutil`(v4)로 대부분 통합된다.** 온도만 플랫폼별로 갈린다.
+
+| 항목 | macOS | Windows | Linux |
+|---|---|---|---|
+| CPU%·메모리·디스크·네트워크·업타임 | gopsutil | gopsutil | gopsutil |
+| 온도 | **gopsutil** (sudo 불필요) | gopsutil로는 **부족** | gopsutil (`/sys/class/hwmon`) |
+| GPU | 별도 | 별도 | 별도 |
+
+- **macOS(Apple Silicon)에서 온도가 sudo 없이 나온다.** M3 Pro에서 21개 센서를 확인했다
+  (gopsutil v4가 IOKit/SMC를 직접 읽는다). 다만 이름이 `PMU tdie1`~`tdie10`, `PMU tdev1`~`tdev8`,
+  `tcal`, `NAND CH0 temp` 식이라 **어느 것이 CPU인지 라벨로 알 수 없다.** 매핑 또는 집계
+  규칙(최대값·평균)을 정해야 한다.
+- **Windows는 보강이 필요하다.** gopsutil의 Windows 구현은 WMI `MSAcpi_ThermalZoneTemperature`
+  하나뿐인데, 이는 ACPI 서멀존이라 대부분의 데스크톱 메인보드에서 값이 없거나 CPU 다이가 아닌
+  대략적인 존 온도다. 코어별·GPU·VRM 온도는 얻을 수 없다.
+  → LibreHardwareMonitor 내장 웹서버(`localhost:8085/data.json`)를 HTTP GET 하는 것이 가장 게으르다.
+  CLR 브릿지 없이 표준 라이브러리만으로 끝난다.
+- GPU는 어느 플랫폼에서도 통합되지 않는다. NVIDIA는 NVML/`nvidia-smi`, 그 외는 각자 다르다.
+
+수집기 인터페이스는 하나로 두고 플랫폼별 구현을 파일로 나눈다(`internal/source/`). Go 빌드
+태그로 분기하면 런타임 분기가 필요 없다.
+
+**신선도.** Claude·Codex 사용량 두 값 모두 해당 머신이 마지막으로 API를 호출한 시점의
+**계정 단위 스냅샷**이다.
 Claude는 세션이 statusline을 렌더링할 때만 갱신되는 push 방식이라 폴링할 대상이 없다.
 집 Mac과 사무실 PC 양쪽에서 에이전트를 돌리므로 한쪽 화면은 **실제보다 낮은 값**을 보여준다.
 
@@ -191,8 +216,11 @@ GPL-3.0-or-later. 프로토콜 구현이 turing-smart-screen-python(GPL-3.0-or-l
 전부 사무실 Windows PC에서 확인할 항목이다.
 
 - **flush 타임아웃 재튜닝.** 3ms는 macOS 값이다. `reference/measure_flush.py`로 다시 잰다.
-- **센서 소스.** LibreHardwareMonitor 웹서버(`localhost:8085/data.json`)가 유력하다.
-  그렇다면 센서 수집기는 HTTP GET 하나로 끝난다.
+- **Windows 온도 소스.** gopsutil의 WMI 서멀존이 그 PC에서 실제로 값을 주는지 먼저 확인하고,
+  안 되면 LibreHardwareMonitor 웹서버를 쓴다. 그 경우 LHM을 상시 실행해야 하므로 배포에
+  전제 조건이 하나 생긴다.
+- **GPU 소스.** 사무실 PC의 GPU 종류에 따라 결정한다.
+- **Apple Silicon 온도 센서 매핑.** `PMU tdie*` 중 무엇을 CPU 온도로 삼을지.
 - **Claude 자격증명 경로.** Windows에는 Keychain이 없다. statusline 경로를 쓰므로 자격증명이
   필요하지 않을 가능성이 높지만 확인한다.
 - 프레임레이트를 25보다 높이면 체감이 나아지는지(명령 15).
