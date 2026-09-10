@@ -116,7 +116,7 @@ USB 벌크로 밀어 넣는 장치다. 신호가 없으면 색 로테이션 데�
 
 ### 낱장 PNG — 단순한 배경 전용
 
-실제로 그릴 화면(수치 4개 + 게이지 + 갱신 시각)으로 측정한 값이다.
+지표 개수와 밀도를 맞춘 측정용 샘플 화면(수치 4개 + 게이지 + 갱신 시각)으로 잰 값이다.
 
 | 화면 | 프레임 | flush 3ms | flush 10ms |
 |---|---|---|---|
@@ -128,9 +128,10 @@ USB 벌크로 밀어 넣는 장치다. 신호가 없으면 색 로테이션 데�
 단순한 배경이라면 낱장 PNG만으로 13~14fps가 나온다. H264 인코더 의존성이 없다.
 
 **그러나 화려한 배경에는 쓸 수 없다.** PNG는 무손실이라 블러와 부드러운 그라디언트에서
-압축이 무너진다. 같은 지표 오버레이를 얹고 배경만 바꿔 측정한 값이다:
+압축이 무너진다. 같은 지표 오버레이를 얹고 배경만 바꿔 **프레임 크기를 측정한** 값이다
+(fps는 위 실측을 근거로 크기에 반비례해 환산한 추정이며 직접 재지 않았다):
 
-| 배경 | 프레임 | 예상 fps |
+| 배경 | 프레임 (실측) | fps (추정) |
 |---|---|---|
 | 단순 물결 | 45.3KB | 12.5 |
 | 기하 라인아트 | 50.8KB | 11.1 |
@@ -160,9 +161,10 @@ USB 벌크로 밀어 넣는 장치다. 신호가 없으면 색 로테이션 데�
   부드럽게 나왔다. 첫 테마가 쓰려는 종류의 배경에서는 문제가 없다.
 - 36초 연속 재생까지 끊김 없이 확인했다.
 - 낱장 이미지와 **섞어 써도 안전하다**(영상 재생 직후 이미지 전송 정상).
-- 실시간 인코딩 여력은 디테일 많은 콘텐츠 기준 실시간의 **5.1배**(`h264_videotoolbox`).
-  다만 **대역폭이 더 빡빡하다** — USB 상한 약 233KB/s인데 `-b:v 2M`이 249KB/s를 낸다.
-  1.5Mbps(≈187KB/s)로 묶어야 하며, `h264_videotoolbox`는 `maxrate`를 줘도 튀므로 확인이 필요하다.
+- **대역폭이 인코딩 속도보다 빡빡한 제약이다.** USB 상한이 약 233KB/s인데 `-b:v 2M`은
+  디테일 많은 콘텐츠에서 249KB/s를 낸다. 1.5Mbps(≈187KB/s)로 묶어야 하며,
+  `h264_videotoolbox`는 `maxrate`를 줘도 튀므로(노이즈 소스에서 758KB/s 관측) 확인이 필요하다.
+  참고로 생성 소스를 직접 인코딩할 때의 여력은 만델브로 기준 실시간의 5.1배였다.
 - 업스트림 README는 이 하드웨어에 대해 "no video or storage support for now"라고 적고 있다.
   영상 경로는 업스트림에서 공식 지원되지 않는 코드다. 우리가 직접 검증하며 써야 한다.
 
@@ -239,9 +241,11 @@ Claude는 세션이 statusline을 렌더링할 때만 갱신되는 push 방식�
 **장치에 레이어는 없다.** 합성은 전적으로 호스트에서 한다.
 
 ```
-배경(절차적 애니메이션) + 센서·사용량 수치
-   → 호스트가 1920×462로 합성 → ROTATE_270 → 462×1920 RGBA
-   → PNG 인코딩 → 명령 102로 전송 (13~14fps)
+배경 영상(mp4 루프) ─┐
+                     ├→ ffmpeg 합성 → H264 인코딩 → 명령 121 청크 스트리밍 (25fps)
+지표 오버레이 ───────┘   오버레이는 2~3초마다만 다시 그린다
+
+단순 배경 테마·폴백: 합성 결과 → ROTATE_270 → 462×1920 RGBA → PNG → 명령 102 (13~14fps)
 ```
 
 **UI는 트레이 아이콘(네이티브) + 설정 화면은 로컬 웹.** 상주·제어는 각 OS 네이티브가 맞고
@@ -278,22 +282,60 @@ GPL-3.0-or-later. 프로토콜 구현이 turing-smart-screen-python(GPL-3.0-or-l
 
 ## 6. 미결정
 
-전부 사무실 Windows PC에서 확인할 항목이다.
+### 사무실 Windows PC에서 확인할 것
 
 - **flush 타임아웃 재튜닝.** 3ms는 macOS 값이다. `reference/measure_flush.py`로 다시 잰다.
-- **Windows 온도 소스.** gopsutil의 WMI 서멀존이 그 PC에서 실제로 값을 주는지 먼저 확인하고,
-  안 되면 LibreHardwareMonitor 웹서버를 쓴다. 그 경우 LHM을 상시 실행해야 하므로 배포에
-  전제 조건이 하나 생긴다.
-- **GPU 소스.** 사무실 PC의 GPU 종류에 따라 결정한다.
-- **Apple Silicon 온도 센서 매핑.** `PMU tdie*` 중 무엇을 CPU 온도로 삼을지.
-- **Claude 자격증명 경로.** Windows에는 Keychain이 없다. statusline 경로를 쓰므로 자격증명이
-  필요하지 않을 가능성이 높지만 확인한다.
-- 프레임레이트를 25보다 높이면 체감이 나아지는지(명령 15).
+- **온도 소스.** gopsutil의 WMI 서멀존이 그 PC에서 값을 주는지 먼저 확인하고, 안 되면
+  LibreHardwareMonitor 웹서버를 쓴다. 그 경우 LHM 상시 실행이 배포 전제 조건이 된다.
+- **GPU 소스.** 그 PC의 GPU 종류에 따라 결정한다.
+- **인코더.** `h264_videotoolbox`는 macOS 전용이다. nvenc/qsv/amf 중 무엇을 쓸지와
+  비트레이트 상한이 지켜지는지 확인한다.
+
+### 어디서든 확인할 것
+
 - **오버레이 갱신 방식.** ffmpeg 필터의 오버레이 입력은 한 번만 읽히므로, 2~3초마다 지표를
-  바꾸려면 ffmpeg를 재시작하거나(끊김 우려) 프레임을 파이프로 공급해야 한다. 어느 쪽이 나은지
-  정해야 한다.
-- **스트림을 끊김 없이 무한히 이어붙일 수 있는지.** 파일 단위 반복 전송은 확인했으나 실시간
-  생성 스트림을 `CMD_STOP_STREAM` 없이 계속 밀어넣는 것은 검증하지 않았다.
-- **Windows 인코더.** `h264_videotoolbox`는 macOS 전용이다. nvenc/qsv/amf 중 무엇을 쓸지와
-  비트레이트 상한이 지켜지는지 그 PC에서 확인한다(videotoolbox는 `maxrate`를 줘도 튀었다).
+  바꾸려면 ffmpeg를 재시작하거나(끊김 우려) 프레임을 파이프로 공급해야 한다.
+- **스트림을 끊김 없이 무한히 이어붙일 수 있는지.** 파일 단위 반복 전송은 36초까지 확인했으나
+  실시간 생성 스트림을 `CMD_STOP_STREAM` 없이 계속 밀어넣는 것은 검증하지 않았다.
+- **Apple Silicon 온도 센서 매핑.** `PMU tdie*` 중 무엇을 CPU 온도로 삼을지.
+- 프레임레이트를 25보다 높이면 체감이 나아지는지(명령 15).
 - ffmpeg 배포 방식. 외부 프로세스 호출이 가장 게으르지만 배포물에 ffmpeg가 딸려온다.
+
+### 디자인 마일스톤에서 정할 것
+
+레이아웃, 배치, 색, 타이포그래피, 그리고 화려한 배경 위에서 수치를 읽히게 하는 방법.
+
+---
+
+## 참고
+
+**장치 프로토콜 — 이 프로젝트의 구현 근거**
+
+- [mathoudebine/turing-smart-screen-python](https://github.com/mathoudebine/turing-smart-screen-python)
+  — 프로토콜 구현의 원본. GPL-3.0-or-later. 우리 Go 포팅과 `testdata/golden.json`이 여기서 나왔다.
+- [릴리스 3.10.0](https://github.com/mathoudebine/turing-smart-screen-python/releases/tag/3.10.0)
+  — TURZX USB 모델(4.6"/5.2"/8"/8.8"/9.2"/12.3") 지원이 들어간 버전. `reference/`가 이 태그를 쓴다.
+- [이슈 #727](https://github.com/mathoudebine/turing-smart-screen-python/issues/727)
+  — v1.x USB 하드웨어 지원 논의. 8.8"가 VID `0x1cbe` / PID `0x0088`, 이름 `TURZX1.0`으로
+  보고되어 우리 장치(PID `0x0092`)와 대조하는 근거가 됐다.
+- [하드웨어 리비전 위키](https://github.com/mathoudebine/turing-smart-screen-python/wiki/Hardware-revisions)
+- [phstudy/turing-smart-screen-cli](https://github.com/phstudy/turing-smart-screen-cli)
+  — 새 TURZX USB 프로토콜을 다루는 별도 CLI 구현.
+
+**제조사**
+
+- [TURZX 공식 사이트](https://www.turzx.com/en/)
+- [8.8/9.2/4.6인치 소프트웨어·테마 배포 페이지](https://www.turzx.com/2025/05/26/88_inch/)
+  — 벤더 앱 `TURZX_V3.x`와 테마 팩. 테마 폴더와 나란히 `video` 폴더를 쓴다.
+
+**호스트 쪽 라이브러리**
+
+- [shirou/gopsutil](https://github.com/shirou/gopsutil) — 크로스플랫폼 시스템 지표. v4 사용.
+- [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
+  — Windows 온도·팬·전력. 내장 웹서버가 `localhost:8085/data.json`으로 JSON을 제공한다.
+- [getlantern/systray](https://github.com/getlantern/systray) — 트레이 아이콘(전 OS).
+- [google/gousb](https://github.com/google/gousb) — libusb 바인딩. cgo다.
+
+**배경 소재**
+
+- [Envato Elements — Motion Graphics Backgrounds](https://elements.envato.com/stock-video/motion-graphics/backgrounds)
