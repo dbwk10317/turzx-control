@@ -1,0 +1,12 @@
+# reference/ 실측 도구가 쓰는 것들 — 저장소에 넣지 않는다
+reference/tss/
+reference/venv/
+reference/*.mp4
+reference/*.png
+
+# Go
+/turzx-control
+*.exe
+*.test
+
+.DS_Store

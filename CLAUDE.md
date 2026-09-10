@@ -1,0 +1,49 @@
+# CLAUDE.md — turzx-control
+
+TURZX / Turing USB 스마트 스크린 패널에 Claude·Codex 사용량과 시스템 센서를 띄우는
+크로스플랫폼 데몬. Go로 만들고 Windows·macOS·Linux에서 동작한다.
+
+개발은 Mac, 실제 운용은 사무실 Windows PC다. 두 환경 모두에서 에이전트를 돌리므로
+사용량 수치의 신선도 문제가 있다 — `DESIGN.md` 2절을 읽는다.
+
+## 현재 상태
+
+**설계 단계.** 장치 실측과 설계가 끝났고 구현은 시작하지 않았다.
+`internal/turzx/`의 프로토콜 구현은 포팅 비용을 재려고 먼저 쓴 것이며, 구현 단계에서
+코드 검토 후 적절한 위치로 옮긴다.
+
+## 반드시 먼저 읽을 것
+
+- [`DESIGN.md`](DESIGN.md) — 장치 실측값, 프로토콜, 아키텍처 결정과 근거.
+  **수치를 추측하지 않는다.** 모든 값은 실제 장치에서 측정했고 `reference/`로 재현한다.
+- [`reference/README.md`](reference/README.md) — 측정 도구 사용법과 장치를 망가뜨리지 않는 방법.
+
+## 장치를 다룰 때
+
+- **응답 읽기를 건너뛰지 않는다.** 응답을 무시하고 write만 하면 장치에 stale 응답이 쌓여
+  이후 모든 전송이 타임아웃난다. 복구하려면 IN 큐를 비우고 sync를 다시 보내며,
+  그래도 안 되면 USB를 뽑았다 꽂아야 한다. 실제로 한 번 이렇게 망가뜨렸다.
+- 프로그램 시작 시 IN 큐를 먼저 비운다.
+- 실측값은 **macOS + libusb 기준**이다. Windows에서는 flush 타임아웃을 다시 튜닝한다.
+
+## 명령
+
+```bash
+go test ./...                        # golden 패킷 대조 — USB 장치 불필요
+go build ./cmd/turzx-control         # (구현 단계에서)
+python3 reference/measure_encoding.py  # 프레임 크기 측정, 장치 불필요
+```
+
+`reference/`의 나머지 측정 스크립트는 실제 장치와 업스트림 체크아웃이 필요하다.
+준비 절차는 `reference/README.md`에 있다.
+
+## 라이선스
+
+GPL-3.0-or-later. 장치 프로토콜 구현이
+[turing-smart-screen-python](https://github.com/mathoudebine/turing-smart-screen-python)(GPL-3.0-or-later)의
+파생이므로 같은 라이선스를 따른다. **새 소스 파일에 SPDX 헤더와 출처 고지를 유지한다.**
+
+## 문서 규칙
+
+`DESIGN.md`는 한 개발 사이클용이다. 구현이 끝나면 살아남을 규칙만 이 파일로 옮기고 삭제한다.
+영구 worklog나 세션별 이력 문서는 만들지 않는다.
