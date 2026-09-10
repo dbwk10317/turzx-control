@@ -22,8 +22,12 @@ import (
 	"testing"
 )
 
-// golden.json은 업스트림 Python 구현(turing-smart-screen-python 3.10.0)이 만든
-// 실제 패킷이다. reference/gen_golden.py로 재생성한다. 타임스탬프는 0으로 고정되어 있다.
+// golden.json은 업스트림 Python 구현(turing-smart-screen-python 3.10.0)이 만든 실제 패킷이다.
+// 타임스탬프 필드(4:8)는 0으로 고정되어 있다 — 그 4바이트만 시간에 따라 변하고 나머지는 결정적이다.
+//
+// 재생성하려면 업스트림을 3.10.0 태그로 받아
+// library.lcd.lcd_comm_turing_usb 의 build_command_packet_header() 로 평문을 만들고
+// 타임스탬프를 0으로 덮은 뒤 encrypt_command_packet() 을 통과시켜 hex로 덤프한다.
 type goldenCase struct {
 	Plain     string `json:"plain"`
 	Encrypted string `json:"encrypted"`

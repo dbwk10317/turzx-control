@@ -21,8 +21,8 @@ TURZX / Turing USB 스마트 스크린 패널에 Claude·Codex 사용량과 시�
 ## 반드시 먼저 읽을 것
 
 - [`DESIGN.md`](DESIGN.md) — 장치 실측값, 프로토콜, 아키텍처 결정과 근거.
-  **수치를 추측하지 않는다.** 모든 값은 실제 장치에서 측정했고 `reference/`로 재현한다.
-- [`reference/README.md`](reference/README.md) — 측정 도구 사용법과 장치를 망가뜨리지 않는 방법.
+  **수치를 추측하지 않는다.** 모든 값은 실제 장치에서 측정한 것이다.
+  2절 "함정"은 구현 전에 반드시 읽는다 — 모두 오류로 드러나지 않는 종류다.
 
 ## 장치를 다룰 때
 
@@ -35,13 +35,9 @@ TURZX / Turing USB 스마트 스크린 패널에 Claude·Codex 사용량과 시�
 ## 명령
 
 ```bash
-go test ./...                        # golden 패킷 대조 — USB 장치 불필요
-go build ./cmd/turzx-control         # (구현 단계에서)
-python3 reference/measure_encoding.py  # 프레임 크기 측정, 장치 불필요
+go test ./...                 # golden 패킷 대조 — USB 장치 불필요
+go build ./cmd/turzx-control  # (구현 단계에서)
 ```
-
-`reference/`의 나머지 측정 스크립트는 실제 장치와 업스트림 체크아웃이 필요하다.
-준비 절차는 `reference/README.md`에 있다.
 
 ## 라이선스
 
