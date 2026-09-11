@@ -66,7 +66,7 @@ func build(t *testing.T, name string) []byte {
 }
 
 func TestGoldenPackets(t *testing.T) {
-	raw, err := os.ReadFile("../../testdata/golden.json")
+	raw, err := os.ReadFile("testdata/golden.json")
 	if err != nil {
 		t.Fatalf("golden 읽기 실패: %v", err)
 	}
@@ -129,5 +129,31 @@ func TestImageCommandLayout(t *testing.T) {
 func TestPayloadTooLarge(t *testing.T) {
 	if _, err := ImageCommand(CmdUploadPNG, 0, make([]byte, MaxPayload+1)); err == nil {
 		t.Fatal("페이로드 초과인데 에러가 없다")
+	}
+}
+
+func TestVideoChunkCommandLayout(t *testing.T) {
+	payload := []byte{0, 0, 0, 1, 0x67}
+	full, err := VideoChunkCommand(0, payload, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := BuildHeader(CmdVideoChunk, 0)
+	SetPayloadSize(want, uint32(len(payload)))
+	want[12] = 1
+	want, err = EncryptPacket(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := full[:packetLen]; string(got) != string(want) {
+		t.Fatalf("video header mismatch: %x", got)
+	}
+	if got := full[packetLen:]; string(got) != string(payload) {
+		t.Fatalf("video payload mismatch: %x", got)
+	}
+	for _, payload := range [][]byte{nil, make([]byte, MaxPayload+1)} {
+		if _, err := VideoChunkCommand(0, payload, false); err == nil {
+			t.Fatalf("accepted H264 chunk length %d", len(payload))
+		}
 	}
 }

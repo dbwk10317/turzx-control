@@ -15,13 +15,13 @@
 //
 // 프로토콜(mathoudebine/turing-smart-screen-python 3.10.0에서 확인):
 //
-//	1. 500바이트 평문 명령 패킷: [0]=명령ID, [2]=0x1A, [3]=0x6D,
-//	   [4:8]=자정 이후 경과 밀리초(리틀엔디언), 나머지는 명령별.
-//	2. DES-CBC로 암호화한다. 키와 IV가 모두 "slv3tuzx"이고 패딩은 0바이트다
-//	   (PKCS#7이 아니다). 500바이트는 504바이트로 패딩된다.
-//	3. 512바이트 프레임에 담고 [510]=161, [511]=26 트레일러를 붙인다.
-//	4. USB 인터페이스 0의 벌크 OUT으로 보낸다. 이미지 명령은 암호화된
-//	   512바이트 헤더 뒤에 인코딩된 이미지 바이트를 그대로 이어 붙인다.
+//  1. 500바이트 평문 명령 패킷: [0]=명령ID, [2]=0x1A, [3]=0x6D,
+//     [4:8]=자정 이후 경과 밀리초(리틀엔디언), 나머지는 명령별.
+//  2. DES-CBC로 암호화한다. 키와 IV가 모두 "slv3tuzx"이고 패딩은 0바이트다
+//     (PKCS#7이 아니다). 500바이트는 504바이트로 패딩된다.
+//  3. 512바이트 프레임에 담고 [510]=161, [511]=26 트레일러를 붙인다.
+//  4. USB 인터페이스 0의 벌크 OUT으로 보낸다. 이미지 명령은 암호화된
+//     512바이트 헤더 뒤에 인코딩된 이미지 바이트를 그대로 이어 붙인다.
 //
 // # 픽셀 포맷 — 반드시 RGBA
 //
@@ -32,9 +32,11 @@
 //     이전 화면 위에 밝은 픽셀만 겹쳐 그려진다.
 //   - 팔레트(P 모드): 완전히 무시된다. 화면이 전혀 갱신되지 않는다.
 //
-// 따라서 색 수를 줄여 프레임을 작게 만드는 최적화 경로는 없다.
+// 인코딩 결과는 8bit RGBA(IHDR color type 6)를 유지해야 한다.
+// 이 형식을 유지하면서 색상 수를 줄이거나 압축 설정을 조정하는 최적화는 가능하다.
 //
-// 가로 방향으로 쓰려면 1920x462로 그린 뒤 270도 회전해 462x1920으로 만들어 보낸다.
+// 가로 방향으로 쓰려면 1920x462로 그린 뒤 시계 방향 90도 회전해 462x1920으로 보낸다.
+// 이는 Pillow ROTATE_270과 같은 방향이다.
 package turzx
 
 import (
@@ -47,11 +49,20 @@ import (
 
 // 벤더 명령 ID.
 const (
-	CmdSync       = 10
-	CmdRestart    = 11
-	CmdBrightness = 14
-	CmdUploadJPEG = 101
-	CmdUploadPNG  = 102
+	CmdSync           = 10
+	CmdRestart        = 11
+	CmdVideoInit13    = 13
+	CmdBrightness     = 14
+	CmdFrameRate      = 15
+	CmdVideoChunkSize = 17
+	CmdVideoInit41    = 41
+	CmdUploadJPEG     = 101
+	CmdUploadPNG      = 102
+	CmdVideoInit111   = 111
+	CmdVideoInit112   = 112
+	CmdVideoChunk     = 121
+	CmdVideoStatus    = 122
+	CmdVideoStop      = 123
 )
 
 const (
@@ -114,6 +125,27 @@ func ImageCommand(cmd byte, tsMillis uint32, payload []byte) ([]byte, error) {
 	}
 	h := BuildHeader(cmd, tsMillis)
 	SetPayloadSize(h, uint32(len(payload)))
+	enc, err := EncryptPacket(h)
+	if err != nil {
+		return nil, err
+	}
+	return append(enc, payload...), nil
+}
+
+// VideoChunkCommand builds command 121 and appends one H264 Annex B chunk.
+// The final flag is only valid for a finite stream whose end is known.
+func VideoChunkCommand(tsMillis uint32, payload []byte, final bool) ([]byte, error) {
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("H264 chunk is empty")
+	}
+	if len(payload) > MaxPayload {
+		return nil, fmt.Errorf("H264 chunk exceeds %d bytes: %d", MaxPayload, len(payload))
+	}
+	h := BuildHeader(CmdVideoChunk, tsMillis)
+	SetPayloadSize(h, uint32(len(payload)))
+	if final {
+		h[12] = 1
+	}
 	enc, err := EncryptPacket(h)
 	if err != nil {
 		return nil, err
