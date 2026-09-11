@@ -2,6 +2,12 @@
 /turzx-control
 *.exe
 *.test
+/.tools/
+/.appdata/
+/.dotnet-cli/
+/.gocache/
+**/bin/
+**/obj/
 
 # 실측·실험 산출물
 *.mp4

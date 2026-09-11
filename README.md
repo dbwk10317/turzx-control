@@ -13,10 +13,23 @@ Windows 환경 진단, USB sync/PNG/유한 H264 전송과 실시간 진단 오�
 - sync·밝기·PNG/JPEG 헤더를 Go로 포팅하고 업스트림 기준 패킷과 바이트 단위 일치를 검증
 - macOS에서 낱장 PNG 전송과 파일 H264 재생·인코딩의 짧은 실측 기록 확보 (`DESIGN.md` 2~3절)
 
-사무실에서는 Windows 데몬이 USB와 시스템 센서를 담당하고, Windows/WSL에서 실행한
-Claude·Codex의 사용량을 공급자별로 수집한다. 기본 지표는 gopsutil, Windows 온도·GPU는
+사무실에서는 Windows 데몬이 USB와 시스템 센서를 담당하고, 설정 UI에서 연결한 데몬 전용
+Claude·Codex 프로필의 사용량을 공급자별로 수집한다. 기존 Windows 앱·CLI와 WSL 프로필은 읽지 않는다.
+기본 지표는 gopsutil, Windows 온도·GPU는
 LibreHardwareMonitor, 영상은 FFmpeg를 활용하는 방향이다. 다음 단계와 통과 기준은
 `DESIGN.md` 8절에 있다.
+
+제품 배포물은 standalone 실행을 목표로 한다. LHM 앱을 별도로 설치·실행하는 대신
+센서 라이브러리 기반 보조 프로그램과 필요한 런타임, FFmpeg·libusb를 동봉하는 방향이다.
+센서 드라이버·권한과 AI 계정 연결 조건은 별도 검증하며, 현재는 개발용 CLI만 있고
+standalone 패키지는 아직 구현하지 않았다.
+
+제품 데몬은 트레이 아이콘의 더블클릭 또는 `설정` 메뉴로 `127.0.0.1`의 로컬 설정 UI를 연다.
+설정 UI에서 Codex·Claude를 각각 연결하며, 공식 프로그램이 사용자 전용 앱 데이터 아래의 데몬 전용
+`CODEX_HOME`·`CLAUDE_CONFIG_DIR`에 자격 증명을 저장한다. 제품은 인증 파일을 직접 읽지 않는다.
+Codex는 App Server의 공식 로그인·한도 조회를 사용한다. Claude는 공식 statusline 입력이 활성
+Claude Code 세션에서 올 때 갱신하므로, 유휴 상태에서는 마지막 수신 시각과 오래됨 상태를 표시한다.
+이 트레이 데몬과 설정 UI는 아직 설계 상태이며 구현되지 않았다.
 
 ## 개발·검증
 
@@ -107,6 +120,18 @@ EOF·정체·취소 시 인코더와 파이프를 정리하고 장치 정지를 
 최대 청크 대기 1121ms·1081ms로 기간 종료까지 진행됐고 정지 응답을 확인했다.
 이후 실제 `assets/backgrounds/azure-ribbon.mp4`로 1분 전송과 사용자의 영상·카운터 정상 표시를 확인했다.
 
+첫 화면 시안은 같은 배경에 시계, `AI 에이전트`, `하드웨어 모니터` 영역을 합성한다. 현재 값은
+레이아웃 검증용이며 화면에 `미리보기 데이터`를 표시한다. `-theme`을 생략하면 기존 진단 카운터가 유지된다.
+시안은 Pretendard 1.3.9 Regular/SemiBold를 바이너리에 포함하므로 사용자 PC에 글꼴을 설치하지 않는다.
+
+```powershell
+# USB 없이 장치용 H264 시안 생성. 출력 파일은 새 파일이어야 한다.
+go run ./cmd/turzx-probe -background assets/backgrounds/azure-ribbon.mp4 -theme azure-ribbon -ffmpeg C:\Workspace\tools\ffmpeg-9.0.1-essentials_build\bin\ffmpeg.exe -duration 12s -render-only azure-theme.h264
+
+# 패널에서 시안 확인
+go run ./cmd/turzx-probe -background assets/backgrounds/azure-ribbon.mp4 -theme azure-ribbon -ffmpeg C:\Workspace\tools\ffmpeg-9.0.1-essentials_build\bin\ffmpeg.exe -duration 30s
+```
+
 stdout에는 소재 SHA-256·인코더 인자·청크/큐 값·경과 시간·정지 응답을 JSON으로 남긴다.
 stderr의 `overlay`는 진단 샘플 생성 시각이다. 청크 대기시간이나 전송 응답은 패널 표시 지연을
 대신하지 않는다. 사용자 결정에 따라 30분 연속 검증은 구현의 선행 조건에서 제외했다.
@@ -122,11 +147,51 @@ go run ./cmd/turzx-metrics -samples 0
 
 USB를 열지 않고 CPU·RAM 사용률을 실제 호스트에서 수집해 JSON으로 출력한다.
 CPU 첫 표본은 비교할 이전 표본이 없어 `collecting`이며 값은 null이다.
-GPU 사용률과 CPU·GPU·RAM 온도는 별도 센서 소스를 연결하기 전까지 `unconnected`다.
-이는 센서 미지원 판정이 아니다. RAM 온도 미지원이 확인되면 식별된 메인보드 온도로 대체하고
-라벨에도 실제 출처를 표시하는 규칙은 설계에 반영했으며, 센서 연결·대체 구현은 후속 단계다.
+센서 보조 프로그램을 연결하지 않은 GPU 사용률과 CPU·GPU·RAM 온도는 `unconnected`다.
+이는 센서 미지원 판정이 아니다.
 
-제품의 갱신 주기는 하드웨어 수집·표시 1초, Claude·Codex 사용량 표시 5초다.
+### Windows 센서 보조 프로그램
+
+`tools/turzx-sensors`는 `LibreHardwareMonitorLib 0.9.6`을 사용하는 콘솔 프로그램이다.
+LHM GUI나 웹서버 없이 동작한다. 개발 시 .NET 8 SDK가 필요하고, 아래 publish 결과에는
+런타임과 DLL을 포함하므로 사용자 PC에서 .NET을 별도로 설치할 필요가 없다.
+
+```powershell
+# .NET 8 SDK가 PATH에 있는 개발 환경
+powershell.exe -NoProfile -File scripts/publish-sensors.ps1
+# 이 작업 PC의 프로젝트 전용 SDK
+powershell.exe -NoProfile -File scripts/publish-sensors.ps1 -DotnetPath .tools/dotnet/dotnet.exe
+
+# 공식 PawnIO 2.2.0 설치 프로그램까지 검증해 동봉하는 센서 배포 폴더
+powershell.exe -NoProfile -File scripts/publish-sensors.ps1 -DotnetPath .tools/dotnet/dotnet.exe -IncludePawnIO
+
+# 실제 센서 ID·이름·종류와 드라이버/권한 상태 확인 (USB 접근 없음)
+go run ./cmd/turzx-metrics -sensor-helper artifacts/sensors-win-x64/turzx-sensors.exe -list-sensors
+# 위 목록에서 확인한 GPU core load/temperature ID를 지정
+go run ./cmd/turzx-metrics -sensor-helper artifacts/sensors-win-x64/turzx-sensors.exe -gpu-usage-sensor '<GPU load ID>' -gpu-temperature-sensor '<GPU temperature ID>' -samples 3
+```
+
+기존 publish 폴더는 덮어쓰지 않는다. 재빌드할 때 `-OutputPath`로 새 폴더를 지정한다.
+`packages.lock.json`으로 의존성을 고정한다. 이미 restore한 환경은 `-NoRestore`를 사용할 수 있다.
+`-IncludePawnIO`는 공식 설치 파일의 고정 SHA-256과 Authenticode 서명자 `CN=namazso.eu`를
+확인하고 `drivers/PawnIO_setup.exe`와 `components.json`을 publish 폴더에 넣는다. 이 단계는
+설치 프로그램을 실행하거나 드라이버를 설치하지 않는다. 제품의 최초 설정·UAC·설치 후 재조회
+흐름은 아직 미구현이다.
+센서 이름으로 자동 선택하지 않으며 ID·종류·숫자를 검사한다. 선택 센서의 누락·오류는 null로 표시하고,
+다른 정상 센서와 CPU·RAM 사용률 수집은 계속한다. `received_at`은 로컬 수신 시각이고
+LHM 원본 시각을 알 수 없으므로 정규화 지표의 `observed_at`은 null이다.
+
+CPU·메인보드·메모리 저수준 센서는 현재 진단 구현에서 PawnIO 설치와 관리자 권한이 모두
+확인됐을 때만 조회한다. 조건이 부족하면 원인을 출력하고 GPU 조회는 시도한다.
+드라이버 설치·권한 상승은 자동 수행하지 않는다. RAM 센서가 없다는 확인 후에만
+`-ram-temperature-unsupported -motherboard-temperature-sensor '<확인한 메인보드 ID>'`를 사용한다.
+RAM 센서 연결 오류만으로 자동 대체하지 않으며 대체값 라벨은 `메인보드 온도`다.
+
+이 publish 결과는 **센서 진단 보조 프로그램**이다. 전체 제품 ZIP, 관리자 센서 프로세스의 설치·
+자동 시작, 서명·전체 의존성 고지·깨끗한 PC 배포 검증은 후속 단계다.
+
+제품의 갱신 주기는 하드웨어 수집과 전체 화면 합성 1초, Claude·Codex 사용량 원본 조회 30초다.
+AI 값은 조회 완료 때 최신 스냅샷으로 교체하고 매초 화면 합성에서 그대로 읽는다.
 사용량 원본 조회/훅 수신은 별도이며 현재 진단 LIVE 카운터는 기존 2초 시험 설정을 유지한다.
 
 ## 라이선스

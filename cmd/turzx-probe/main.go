@@ -38,6 +38,7 @@ func run(args []string) error {
 	pngPath := flags.String("png", "", "optional native 462x1920 RGBA PNG to display")
 	h264Path := flags.String("h264", "", "optional finite H264 Annex B stream to display")
 	background := flags.String("background", "", "local MP4 background for the live diagnostic overlay")
+	theme := flags.String("theme", "", "optional live overlay theme: azure-ribbon (preview data)")
 	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable for the live diagnostic")
 	duration := flags.Duration("duration", 30*time.Second, "live diagnostic duration")
 	chunkWait := flags.Duration("chunk-wait", 1500*time.Millisecond, "live chunk assembly and queue wait limit")
@@ -66,11 +67,14 @@ func run(args []string) error {
 	if *frameRate < 1 || *frameRate > 120 || *brightness < 0 || *brightness > 102 || *queueTimeout <= 0 {
 		return fmt.Errorf("require frame-rate 1..120, brightness 0..102, and positive queue-timeout")
 	}
-	if *duration <= 0 || *chunkWait <= 0 || (*renderOnly != "" && *background == "") {
-		return fmt.Errorf("require positive duration/chunk-wait and -background for -render-only")
+	if *duration <= 0 || *chunkWait <= 0 || ((*renderOnly != "" || *theme != "") && *background == "") {
+		return fmt.Errorf("require positive duration/chunk-wait and -background for -render-only or -theme")
+	}
+	if *theme != "" && *theme != "azure-ribbon" {
+		return fmt.Errorf("unknown theme %q", *theme)
 	}
 	if *background != "" {
-		return runLive(*background, *ffmpeg, *renderOnly, *duration, *timeout, *flush, *chunkWait,
+		return runLive(*background, *theme, *ffmpeg, *renderOnly, *duration, *timeout, *flush, *chunkWait,
 			turzx.VideoOptions{FrameRate: byte(*frameRate), Brightness: byte(*brightness), QueueTimeout: *queueTimeout})
 	}
 	var payload []byte

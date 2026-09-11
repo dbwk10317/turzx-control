@@ -21,10 +21,19 @@ import (
 	"github.com/dbwk10317/turzx-control/internal/turzx"
 )
 
-// runLive is a bounded G1 experiment, not the product daemon or theme renderer.
-func runLive(background, ffmpeg, output string, duration, timeout, flush, chunkWait time.Duration, opts turzx.VideoOptions) error {
+// runLive is a bounded G1 experiment and theme preview, not the product daemon.
+func runLive(background, theme, ffmpeg, output string, duration, timeout, flush, chunkWait time.Duration, opts turzx.VideoOptions) error {
 	if !strings.EqualFold(filepath.Ext(background), ".mp4") {
 		return fmt.Errorf("background must be an MP4 file")
+	}
+	var overlay render.Overlay
+	var overlayInterval time.Duration
+	if theme != "" {
+		if theme != "azure-ribbon" {
+			return fmt.Errorf("unknown theme %q", theme)
+		}
+		overlay = render.AzurePreviewOverlay
+		overlayInterval = time.Second
 	}
 	file, err := os.Open(background)
 	if err != nil {
@@ -67,6 +76,7 @@ func runLive(background, ffmpeg, output string, duration, timeout, flush, chunkW
 	started := time.Now()
 	stream, startErr := render.Start(liveCtx, render.Options{
 		FFmpeg: ffmpeg, Background: background, FrameRate: int(opts.FrameRate),
+		Overlay: overlay, OverlayInterval: overlayInterval,
 		OnOverlay: func(at time.Time, counter uint64) {
 			// Diagnostic sample times, not device display acknowledgements.
 			_ = json.NewEncoder(os.Stderr).Encode(struct {

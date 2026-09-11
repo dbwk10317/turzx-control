@@ -24,6 +24,10 @@ type Reading struct {
 	Source     string     `json:"source"`
 	State      string     `json:"state"`
 	ObservedAt *time.Time `json:"observed_at"`
+	SensorID   string     `json:"sensor_id,omitempty"`
+	Label      string     `json:"label,omitempty"`
+	ReceivedAt *time.Time `json:"received_at,omitempty"`
+	Error      string     `json:"error,omitempty"`
 }
 
 // HardwareSnapshot contains the readings produced by one collection pass.

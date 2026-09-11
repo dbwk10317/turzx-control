@@ -3,7 +3,7 @@
 // FFmpeg invocation follows the official FFmpeg command and filter documentation;
 // no FFmpeg source code is copied.
 
-// Package render produces the live H264 stream used by the G1 diagnostic.
+// Package render produces the live H264 stream used by the G1 diagnostic and theme preview.
 package render
 
 import (
@@ -42,14 +42,20 @@ const (
 var errClosed = errors.New("render stream closed")
 
 // Options configures the G1 FFmpeg producer. OnOverlay runs synchronously when
-// a new diagnostic overlay is selected, initially at counter zero, and must
+// a new overlay is selected, initially at counter zero, and must
 // return promptly so it cannot hold up frame delivery or shutdown.
 type Options struct {
 	FFmpeg     string
 	Background string
 	FrameRate  int
-	OnOverlay  func(time.Time, uint64)
+	Overlay    Overlay
+	// OverlayInterval defaults to the two-second diagnostic cadence.
+	OverlayInterval time.Duration
+	OnOverlay       func(time.Time, uint64)
 }
+
+// Overlay renders one frame of the transparent overlay stream.
+type Overlay func(elapsed time.Duration, counter uint64) ([]byte, error)
 
 // Stream is an FFmpeg Annex B H264 stdout stream.
 type Stream struct {
@@ -103,8 +109,18 @@ func Start(ctx context.Context, options Options) (*Stream, error) {
 	if options.FrameRate < 1 || options.FrameRate > 120 {
 		return nil, fmt.Errorf("start render: frame rate must be between 1 and 120")
 	}
+	if options.OverlayInterval < 0 {
+		return nil, fmt.Errorf("start render: overlay interval must not be negative")
+	}
+	if options.OverlayInterval == 0 {
+		options.OverlayInterval = overlayInterval
+	}
+	overlay := options.Overlay
+	if overlay == nil {
+		overlay = diagnosticOverlay
+	}
 
-	initial, err := diagnosticOverlay(0, 0)
+	initial, err := overlay(0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("start render: make initial overlay: %w", err)
 	}
@@ -166,7 +182,7 @@ func Start(ctx context.Context, options Options) (*Stream, error) {
 	s.stdin, s.stdout, s.stderr = stdinW, stdoutR, stderrR
 
 	s.workers.Add(2)
-	go s.feed(initial, options.FrameRate, options.OnOverlay)
+	go s.feed(initial, options.FrameRate, overlay, options.OverlayInterval, options.OnOverlay)
 	go func() {
 		defer s.workers.Done()
 		_, _ = io.Copy(&s.tail, s.stderr)
@@ -254,7 +270,7 @@ func (s *Stream) Close() error {
 	return err
 }
 
-func (s *Stream) feed(frame []byte, frameRate int, onOverlay func(time.Time, uint64)) {
+func (s *Stream) feed(frame []byte, frameRate int, overlay Overlay, interval time.Duration, onOverlay func(time.Time, uint64)) {
 	defer s.workers.Done()
 	defer close(s.feedErr)
 
@@ -277,10 +293,10 @@ func (s *Stream) feed(frame []byte, frameRate int, onOverlay func(time.Time, uin
 			return
 		case <-ticker.C:
 			now := time.Now()
-			if now.Sub(lastOverlay) >= overlayInterval {
+			if now.Sub(lastOverlay) >= interval {
 				counter++
 				var err error
-				frame, err = diagnosticOverlay(now.Sub(started), counter)
+				frame, err = overlay(now.Sub(started), counter)
 				if err != nil {
 					s.feedErr <- fmt.Errorf("make overlay: %w", err)
 					s.cancel(err)

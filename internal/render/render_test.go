@@ -152,22 +152,77 @@ func TestDiagnosticOverlay(t *testing.T) {
 	}
 }
 
+func TestAzurePreviewOverlay(t *testing.T) {
+	a, err := AzurePreviewOverlay(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := AzurePreviewOverlay(2*time.Second, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(a, b) {
+		t.Fatal("preview counter update did not change PNG")
+	}
+	img, err := png.Decode(bytes.NewReader(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := img.Bounds().Size(); got.X != landscapeWidth || got.Y != landscapeHeight {
+		t.Fatalf("preview size = %v", got)
+	}
+	_, _, _, alpha := img.At(0, 0).RGBA()
+	if alpha != 0 {
+		t.Fatalf("preview background alpha = %d, want 0", alpha)
+	}
+}
+
+func TestStartUsesSelectedOverlay(t *testing.T) {
+	t.Setenv("GO_WANT_RENDER_HELPER", "1")
+	called := make(chan struct{}, 1)
+	stream, err := Start(context.Background(), Options{
+		FFmpeg:     os.Args[0],
+		Background: tempMP4(t),
+		Overlay: func(elapsed time.Duration, counter uint64) ([]byte, error) {
+			if elapsed != 0 || counter != 0 {
+				t.Errorf("initial overlay args = %s, %d", elapsed, counter)
+			}
+			called <- struct{}{}
+			return diagnosticOverlay(elapsed, counter)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("selected overlay was not called")
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+}
+
 func TestStartValidatesBeforeSpawn(t *testing.T) {
 	t.Setenv("GO_WANT_RENDER_HELPER", "1")
 	tests := []struct {
 		name       string
 		background string
 		frameRate  int
+		interval   time.Duration
 		want       string
 	}{
 		{name: "missing", background: "missing.mp4", want: "stat background"},
 		{name: "extension", background: tempFile(t, "background.mov"), want: "must be an mp4"},
 		{name: "frame rate", background: tempMP4(t), frameRate: -1, want: "frame rate"},
 		{name: "high frame rate", background: tempMP4(t), frameRate: 121, want: "frame rate"},
+		{name: "negative overlay interval", background: tempMP4(t), interval: -time.Second, want: "overlay interval"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := Start(context.Background(), Options{FFmpeg: os.Args[0], Background: test.background, FrameRate: test.frameRate})
+			options := Options{FFmpeg: os.Args[0], Background: test.background, FrameRate: test.frameRate, OverlayInterval: test.interval}
+			_, err := Start(context.Background(), options)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Start() = %v, want %q", err, test.want)
 			}

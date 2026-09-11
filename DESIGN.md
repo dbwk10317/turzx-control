@@ -26,23 +26,29 @@ Windows 운용 전체는 검증되지 않았다. 아래 검증 관문의 통과�
 - 보유한 **TURZX 9.2인치 한 대**, 논리 화면은 가로 **1920×462**.
 - 개발은 macOS, 일상 운용은 사무실 Windows PC. 사용자는 **Windows와 WSL 양쪽에서
   Claude·Codex를 사용**한다. Linux도 같은 구조를 지원하되 OS별 검증 전에는 지원 완료로 표기하지 않는다.
+- v1 첫 테마의 AI 사용량은 Windows 트레이 데몬이 관리하는 공급자별 전용 프로필만 표시한다.
+  기존 Windows 앱·CLI 프로필과 WSL 계정·버킷은 선택·합산·대체하지 않는다.
 - 첫 테마는 기성 mp4 모션그래픽 배경을 반복하고 지표를 겹친다. 배경은 절차적으로 만들지 않는다.
 - Claude와 Codex 각각 5시간·7일 **남은 사용량과 리셋까지의 시간**, CPU·GPU 사용률과 온도,
   RAM 사용률과 온도를 표시한다. RAM 온도 센서가 없으면 메인보드 온도로 대체하며 실제 출처를
   `메인보드 온도`로 표시한다. 둘 다 없으면 미지원이다. 계정에서 해당 창을 제공하지 않으면 미제공 상태로 표시한다.
-- 하드웨어 지표는 수집·표시를 1초마다 갱신하고, Claude·Codex 사용량 표시는 5초마다 갱신한다.
-  영상은 우선 25fps다. 합성 오버레이는 하드웨어 주기에 맞춰 최대 1초마다 다시 그리되 사용량은
-  별도 5초 스냅샷을 사용한다. 사용량 원본의 수집·조회 주기는 별개이며 5초마다 새 계정 수치를
-  얻는다고 약속하지 않는다. 표시 갱신만으로 수신 시각·신선도를 갱신하지 않는다.
+- 하드웨어 지표 수집과 전체 화면 합성은 1초마다 갱신하고, Claude·Codex 사용량 원본 조회는
+  30초마다 수행한다. 영상은 우선 25fps다. AI 값은 조회 완료 때 최신 불변 스냅샷으로 원자 교체하고
+  매초 합성에서 그대로 읽는다. Claude statusline 원본 수신은 이벤트 기반이며, 반복 합성만으로
+  수신 시각·신선도를 갱신하지 않는다.
 - 사용자가 테마 파일·소재를 교체할 수 있어야 한다.
 
 v1은 단일 장치, 공급자별 선택 계정 하나, 영상 테마 하나와 정적 폴백, 트레이 제어,
 로컬 설정·정적 미리보기를 제공한다. 범용 위젯 플러그인, 브라우저 테마 편집기, 다중 장치,
 과금·토큰 비용 추정, 원격 제어, Mac↔사무실 스냅샷 중계 서버는 뒤로 미룬다.
 
-**첫 테마의 시각 디자인은 미착수다.** 과거 화면은 처리량 측정용 샘플이며 시안이 아니다.
-레이아웃·색·폰트·가독성은 별도 디자인 마일스톤에서 정한다. 작은 글자·얇은 선은 H264 인코딩 후
-실제 패널에서 확인한다. 폰트 렌더러만으로 합성·회전·압축의 화질 문제가 해결되지는 않는다.
+**첫 테마의 코드 시안을 구현했다.** 제공된 `azure-ribbon.mp4` 위에 하나의 반투명 레일을 두고
+시계, `AI 에이전트`, `하드웨어 모니터` 영역으로 묶는다. AI 영역은 Codex·Claude의 5시간/주간 잔여량과
+리셋 시간을 이중 진행 막대로, 하드웨어 영역은 CPU·GPU·RAM 사용률과 온도를 표시한다.
+색은 짙은 청록 바탕, cyan·blue 강조, 밝은 본문과 회청색 보조 텍스트를 사용한다. 글꼴은
+SIL OFL 1.1의 Pretendard 1.3.9 Regular/SemiBold를 소스에 동봉해 OS 설치에 의존하지 않는다.
+`-theme azure-ribbon`의 값은 `미리보기 데이터`로 표시하는 레이아웃 검증값이다.
+H264 합성 프레임은 확인했지만 실제 패널 가독성과 실데이터·오래됨 상태 연결은 남아 있다.
 
 ## 2. 현재 구현과 근거의 범위
 
@@ -131,15 +137,16 @@ flush 100ms에서 3ms로 바꾼 13.3KiB 사례는 5.4→12.7fps, **약 2.35배**
 **Windows 네이티브 데몬 한 개가 USB·트레이·센서·렌더러를 소유한다.** WSL의 CPU/RAM을
 호스트 센서로 쓰지 않으며 USB를 WSL로 넘기는 구성을 기본으로 하지 않는다.
 
-- Windows Claude와 WSL Claude는 각 statusline 어댑터가 필요한 필드만 Windows 사용자 전용
-  inbox에 쓴다. WSL에서는 설정된 `/mnt/c/...` 공유 경로를 사용한다. WSL localhost와 Windows
-  localhost가 같다는 가정으로 수신 서버를 열지 않는다.
+- v1 표시 입력은 데몬 전용 Windows Claude 프로필의 statusline 어댑터와 데몬 전용 Windows
+  Codex App Server로 한정한다. 기존 Windows 앱·CLI 프로필과 WSL 입력은 첫 테마에서 읽지 않는다.
+  이후 WSL 지원을 다시 추가해도 WSL localhost와 Windows localhost가 같다는 가정으로 수신 서버를 열지 않는다.
 - inbox 파일은 공급자·명시적 계정 별칭·실행 환경·세션별로 분리한다. 같은 디렉터리의 임시 파일을
   쓴 뒤 원자 교체하며, Windows 파일 잠금·WSL 경계에서의 교체 동작은 G0에서 확인한다.
-- 사용자 프로필 경로는 설정으로 선택한다. 별칭은 계정 일치의 증거가 아니므로 설치 때
-  Windows/WSL 로그인 대상을 대조한다. 다른 계정은 합치지 않고 선택한다. 계정 전환 시 이전 캐시를 비운다.
-- Codex는 공식 조회가 성공하면 WSL 로그를 옮길 필요가 없다. 로그 대체 경로를 켜는 경우에만
-  Windows의 `CODEX_HOME`과 WSL의 별도 홈을 명시한다. WSL 종료가 다른 수집을 막으면 안 된다.
+- 설정 UI의 공급자별 `연결` 동작이 브라우저 로그인을 시작한다. 데몬은 사용자 전용 앱 데이터 아래에
+  별도 `CODEX_HOME`과 `CLAUDE_CONFIG_DIR`을 두고 해당 공식 프로그램만 이 경로를 사용하게 한다.
+  제품 코드는 인증 파일을 읽거나 토큰을 자체 설정 파일로 복사하지 않는다.
+- 기존 Windows 앱·CLI와 WSL의 홈은 탐색하지 않는다. 사용자가 같은 공급자 계정으로 기존 클라이언트를
+  사용하면 서버 쪽 계정 한도에는 함께 반영되지만, 로컬 관측과 세션을 합산해서 사용량을 만들지 않는다.
 
 ### 계정 연결과 전환
 
@@ -148,17 +155,24 @@ flush 100ms에서 3ms로 바꾼 13.3KiB 사례는 5.4→12.7fps, **약 2.35배**
 관측·캐시·진행 중 조회는 시작 당시의 `binding_id`에 묶고, 전환 시 이전 세대의 현재 값과
 리셋 이력을 비운다. 이전 세대 파일과 늦게 완료된 응답은 현재 값으로 채택하지 않는다.
 
-- Codex는 시작 시와 각 사용량 조회 전후 `account/read`로 설치 시 확인한 계정 정보를 대조한다.
+- Codex는 전용 App Server 시작 시와 각 사용량 조회 전후 `account/read`로 설정 UI에서 연결한 계정 정보를 대조한다.
   `account/updated` 알림은 재확인 계기로 사용한다. 인증 모드가 같은 계정 교체를 이 알림만으로
   감지한다고 가정하지 않는다. 조회 중 계정 정보가 달라지거나 확인이 실패하면 해당 사용량
   응답을 보류하고 `계정 확인 필요` 또는 `인증 필요`로 표시한다. [공식 계약][codex]
+- 전용 Windows Codex 계정은 로그인·로그아웃 알림, App Server 재시작과 사용량 조회 전후에
+  `account/read`로 확인한다. 계정 변경을 감지하면 기존 연결 세대의 값과 리셋 이력을 즉시 비우고
+  새 사용량 조회를 시작한다. 새 응답이 다음 1초 합성 틱까지 완료되지 않으면 `동기화 중`을 표시하며
+  이전 계정 값을 새 계정 값처럼 유지하지 않는다.
 - 반환되는 계정 정보로 이메일 부재·워크스페이스 변경 등을 구별할 수 없는 설치 환경은
   자동 계정 식별을 지원한다고 표시하지 않는다. G0에서 실제 CLI 버전의 식별 범위와 외부
   로그인 변경 반영을 확인하고, 불충분하면 계정 전환 후 수동 재연결을 운용 조건으로 둔다.
-- Claude statusline과 Codex 로그 대체 모드는 계정 별칭만으로 실제 로그인 계정을 검증할 수
+- Claude statusline은 계정 별칭만으로 실제 로그인 계정을 검증할 수
   없다. 사용자가 해당 환경에서 계정을 바꿀 때 수집을 중지하고 로그인 대상을 다시 확인한 뒤
   소스를 재연결한다. UI에 `수동 확인한 계정`임을 표시한다. 통보 없는 로그인 변경까지
   자동 감지한다고 약속하지 않는다.
+- 전용 Windows Claude 프로필은 새 로그인 뒤 새 statusline 이벤트에서 계정 전환을 확인한 다음 연결 세대를
+  바꾼다. 유휴 상태에서는 이벤트가 없을 수 있으므로 다음 합성 틱의 자동 전환을 보장하지 않으며,
+  확인 전에는 `계정 확인 필요`를 표시하고 새 이벤트 또는 수동 재연결을 기다린다.
 - Claude 어댑터의 `binding_id`는 세션 시작 시 고정한다. 재연결 때 기존 세션을 종료하고 새
   세션으로 시작한다. 오래된 훅이 현재 설정의 새 세대를 읽어 자신을 재등록해서는 안 된다.
   로그 대체 모드도 재연결 후 새 세션만 허용하며 이전 세션의 뒤늦은 이벤트는 제외한다.
@@ -227,6 +241,11 @@ flush 100ms에서 3ms로 바꾼 13.3KiB 사례는 5.4→12.7fps, **약 2.35배**
 
 ### Claude
 
+설정 UI의 `Claude 연결`은 `CLAUDE_CONFIG_DIR`을 데몬 전용 사용자 데이터 경로로 지정한
+`claude auth login`을 시작한다. 공식 Claude Code가 그 경로의 자격 증명을 관리하며 제품은
+`.credentials.json`을 직접 읽지 않는다. `claude auth status`는 연결 상태 확인에만 사용한다.
+[공식 인증 문서][claude-auth]
+
 statusline stdin의 `rate_limits.five_hour`와 `seven_day`에서 `used_percentage`, `resets_at`을
 읽는다. 창은 각각 없을 수 있고 첫 API 응답 전에는 없을 수 있으며 계약·버전별 제공 조건이
 다르다. 공식 문서상 리셋 시각이 지난 창은 입력에서 제거되므로, 이 누락에는 위의 `갱신 대기`
@@ -241,14 +260,23 @@ statusline stdin의 `rate_limits.five_hour`와 `seven_day`에서 `used_percentag
 이 경로는 집 Mac에서만 발생한 사용량을 실시간 보장하지 못한다. 오래된 값은 소진·리셋 여부에
 따라 실제보다 높거나 낮을 수 있다. Mac 중계는 v2이며 v1은 출처와 신선도 한계를 드러낸다.
 
+공식 문서에서 구조화된 5시간·7일 값은 활성 Claude Code 세션의 statusline 입력으로 제공된다.
+로그인만 유지한 유휴 프로세스가 이 값을 임의 시점에 조회하는 공개 API는 현재 확인하지 못했다.
+따라서 v1은 전용 프로필에서 Claude Code 활동이 있을 때 값을 갱신하고, 그 외에는 마지막 수신 시각과
+`오래됨`을 표시한다. 내부 OAuth 엔드포인트 호출, 인증 파일 파싱, `/usage` TUI 화면 스크래핑은 사용하지 않는다.
+
 ### Codex
 
-**우선 선택: 설치된 Codex CLI의 App Server `account/rateLimits/read`.** 데몬이 stdio 자식
+**선택: 데몬 전용 프로필의 Codex App Server `account/rateLimits/read`.** 설정 UI의 `Codex 연결`은
+`account/login/start`의 ChatGPT 브라우저 흐름을 시작하고 완료 알림을 반영한다. 데몬이 stdio 자식
 프로세스를 시작하고 `initialize`/`initialized` 후 조회한다. 대화나 모델 호출은 만들지 않는다.
-Codex가 로그인과 자격 증명을 관리하며 이 프로젝트는 인증 파일·Keychain을 직접 읽지 않는다.
-설치 PC에서 호환 버전·로그인 공유·무대화 조회·상주 비용을 G0에서 확인한다. [공식 계약][codex]
+Codex가 로그인과 자격 증명을 관리하며 이 프로젝트는 인증 파일·자격 증명 저장소를 직접 읽지 않는다.
+기존 Windows 앱/CLI가 기본 `%USERPROFILE%\.codex`를 공유하더라도 데몬은 그 홈을 사용하지 않는다.
+설치 PC에서 호환 버전·전용 홈 격리·무대화 조회·상주 비용을 G0에서 확인한다. [공식 계약][codex]
 
-- 최초 조회 후 기본 60초 폴링을 설계값으로 둔다. 공급자가 보장한 폴링 간격은 아니다.
+- 사용량은 최초 조회 후 30초마다 조회한다. 계정 변경·`account/rateLimits/updated` 알림은 즉시
+  새 조회를 시작한다. 30초는 공급자가 정한 제한이 아니라 제품의 원본 조회 주기다. 완료된 최신
+  스냅샷은 다음 1초 합성 틱에서 반영하며 화면 재합성만으로 이를 새 원본 관측으로 기록하지 않는다.
   실패·429에서는 재시도 간격을 늘리고 인증 실패는 재로그인 필요 상태로 둔다.
 - `rateLimitsByLimitId`가 있으면 선택한 버킷(기본 후보 `codex`)을 읽고, 없으면 단일
   `rateLimits`를 사용한다. 예상 버킷이 없을 때 다른 버킷을 조용히 대신 쓰지 않는다.
@@ -278,13 +306,57 @@ CPU 사용률과 RAM은 `gopsutil/v4`를 우선한다. CPU는 샘플 간 변화�
 | macOS | M3 Pro에서 gopsutil 온도 21개가 관측됐다는 기록 유지. `PMU tdie*`를 근거 없이 CPU로 이름 붙이지 않음. GPU 부하도 별도 검증 전 미제공 |
 | Linux | hwmon·GPU 공급자가 제공하는 센서를 식별해 선택. 권한·하드웨어별 부재 허용 |
 
-LibreHardwareMonitor는 별도 실행·필요 권한·자동 시작이 전제다. 수집 주기마다 `data.json` 트리를 한 번 가져와
-`SensorId`와 `Type`으로 매핑한다. 숫자 `RawValue`를 제공하는 버전을 우선하고 표시용 `Value`의
-단위·지역화 문자열을 숫자로 오인하지 않는다. 설치 버전에서 필드와 CPU/GPU의 실제 의미를 확인하고
-ID가 바뀌면 재선택한다. [LHM 소스][lhm-http], [gopsutil Windows 센서 소스][gopsutil-win]
+**2026-09-11 사용자 요구: 배포물은 standalone 실행을 목표로 한다.** LHM GUI 앱의 별도 설치·
+상주·웹서버 설정을 제품 사용 조건으로 요구하지 않는다. `LibreHardwareMonitorLib`를 사용하는
+작은 Windows 센서 보조 프로그램을 동봉하고 Go 데몬이 시작·종료를 관리하는 방향으로 변경한다.
+보조 프로그램은 .NET self-contained로 배포해 사용자 PC의 별도 .NET 설치에 의존하지 않는다.
+사용자가 ZIP 안에 실행 파일과 필요한 구성요소를 동봉하는 폴더형 배포를 선택했다.
+[LHM 라이브러리 통합 안내][lhm], [.NET 배포 방식][dotnet-deploy]
 
-LHM URL이 localhost라는 것만으로 서버의 외부 노출이 막히지는 않는다. 실제 listen 주소와
-방화벽 범위를 확인해 로컬 전용으로 제한한다. 이 프로그램은 센서 읽기만 사용한다.
+보조 프로그램은 센서 읽기만 수행한다. 센서 ID·하드웨어 ID·종류·숫자/null·읽기 결과를
+로컬 IPC로 전달하며 이름 기반 자동 선택이나 지역화된 표시 문자열 파싱을 하지 않는다.
+ID가 바뀌면 재선택한다. 첫 진단 IPC는 `--stdio` 자식의 stdin에 `sample` 한 줄을 쓰고 stdout에서
+`protocol_version=1` JSON 한 줄을 받는 요청·응답 방식이다. stderr는 크기를 제한해 별도 수집한다.
+응답 상한은 2MiB, 첫 초기화 포함 응답 제한은 10초, 후속 응답 제한은 1500ms다.
+요청은 직렬 처리하고 취소·시간 초과·프로토콜 오류 시 자식을 정리한다. 진단 경로는 자동 재시작하지 않는다.
+진단 CLI는 명시한 로컬 helper 경로를 사용하고 Windows에서 자식 콘솔 창을 띄우지 않는다.
+PawnIO 미설치 또는 일반 사용자 권한이면 CPU·메인보드·메모리 저수준 접근을 보수적으로 생략하고
+사유를 전달한다. 이는 센서 미지원 판정이 아니다. GPU 조회와 gopsutil CPU·RAM 수집은 유지한다.
+관리자 센서 프로세스의 설치·인증된 IPC·자동 시작은 별도 구현이며 진단 CLI가 권한을 자동 상승하지 않는다.
+웹서버를 제품 경로에 추가하지 않는다. LHM의 `Update()` 호출 시각과 실제 센서 원본 관측 시각을
+구분하고, 원본 시각을 알 수 없으면 null로 둔다. 센서별 오류 격리와 RAM 대체 규칙은 유지한다.
+
+라이브러리 동봉만으로 드라이버 설치와 관리자 권한 요구가 사라지지는 않는다. 확인한 LHM 0.9.6은
+PawnIO 설치 상태를 확인하고 해당 커널 장치를 연다. 필요한 센서의 드라이버·권한 범위, 드라이버
+설치·제거 절차와 배포 조건을 실제 PC에서 검증해야 한다. 진단 수집 중 드라이버를 자동 설치하지 않으며
+메인 앱 전체의 상시 관리자 실행이나 OS 보안 기능 해제를 기본 조건으로 삼지 않는다.
+보조 프로그램·Go 진단 연동과 일반 사용자 GPU 수집은 구현·검증했다.
+드라이버 설치와 CPU·RAM/메인보드 온도, 관리자 센서 프로세스의 제품 통합은 아직 검증하지 않았다.
+[LHM 0.9.6 PawnIO 구현][lhm-pawnio], [gopsutil Windows 센서 소스][gopsutil-win]
+
+**사용자 승인된 동봉 설치 방향:** standalone ZIP에 공식 서명된 PawnIO 설치 프로그램을 포함하고,
+최초 설정에서 사용자가 온도 센서 사용을 선택하면 관리자 승인(UAC) 후 동봉 설치 프로그램을 실행한다.
+사용자에게 PawnIO 사이트 방문이나 별도 다운로드를 요구하지 않는다. PawnIO 소스를 축소·재빌드한
+드라이버는 만들지 않는다. `scripts/fetch-pawnio.ps1`과 `scripts/publish-sensors.ps1 -IncludePawnIO`는
+공식 2.2.0 설치 파일을 고정 SHA-256·Authenticode 서명으로 검증하고 센서 publish 폴더의
+`drivers/PawnIO_setup.exe`에 동봉한다. 설치 실행과 최초 설정 흐름은 아직 구현하지 않았다.
+
+- 빌드 단계에서 공식 배포본의 버전을 고정하고 다운로드 출처·SHA-256·서명자 정보를 기록한다.
+  패키징 시 Authenticode 서명과 고정 해시를 검증하고, 실행 직전에도 동봉 파일을 검증한다.
+  첫 실행 시 인터넷에서 최신 설치 프로그램을 가져오는 방식은 사용하지 않는다.
+- 최초 설정은 설치 상태 확인 → 온도 센서 활성화 안내 → UAC → 설치 종료 코드 확인 →
+  새 helper 프로세스로 드라이버·권한·센서 상태 재조회 순서다. UAC 취소·설치 실패·재부팅 필요를
+  구분하며, 설치 프로그램 종료 코드 0만으로 온도 수집 성공을 표시하지 않는다.
+- 설치를 생략하거나 취소해도 CPU·RAM 사용률과 이용 가능한 GPU 센서를 제공한다.
+  PawnIO 설치 자체로 일반 사용자 helper에 관리자 권한이 생기지는 않는다. 제품용 관리자 센서
+  프로세스와 인증된 IPC는 별도로 설계·검증하며 메인 앱 전체의 상시 권한 상승으로 대체하지 않는다.
+- PawnIO는 다른 앱도 사용하는 공유 드라이버이므로 우리 앱 삭제 시 무조건 함께 제거하지 않는다.
+  배포본의 라이선스·소스 제공 조건과 의존성 고지를 확인하고 ZIP에 필요한 자료를 포함한다.
+- 구현 검증은 정상 파일·변조 파일·서명 실패·UAC 취소·설치 실패·재부팅 필요·기설치 상태를 포함한다.
+  실제 설치와 관리자 센서 읽기, .NET/LHM 미설치 PC에서의 ZIP 실행은 별도 통합 검증으로 남긴다.
+
+필수 `ponytail` 스킬은 사용자 범위 `C:\Users\youhyun\.codex\skills\ponytail\SKILL.md`에
+설치해 이번 구현에 적용했다. 동봉 staging을 드라이버 설치나 최초 설정 구현 완료로 취급하지 않는다.
 
 수집 실패는 항목별로 격리한다. 초기 신선도 기준은 센서의 마지막 성공 샘플에서 10초,
 Codex 공식 조회의 마지막 성공 응답에서 180초다. 로그는 유효 이벤트 시각에서 5분을 기준으로 한다.
@@ -299,7 +371,7 @@ Claude는 해당 창이 유효하게 포함된 마지막 새 훅 수신에서 5�
 ffmpeg에 프레임을 공급하는 횟수는 다르다.**
 
 ```text
-수집기 → 하드웨어 1초/사용량 표시 5초 스냅샷 → 테마 오버레이(최대 1초마다 다시 그림)
+수집기 → 하드웨어 1초/사용량 원본 조회 30초·원자 스냅샷 → 테마 오버레이(1초마다 다시 그림)
                                 ↓ 캐시한 투명 PNG를 25fps로 반복 공급
 기성 mp4 루프 → ffmpeg ← stdin image2pipe
                   ↓ 1920×462 합성 → 시계 90도 회전 → 462×1920
@@ -446,7 +518,7 @@ Go에는 모든 프로젝트가 따라야 하는 단일 폴더 표준이 없다.
 | 역할 | 권장 선택 | 프로젝트가 담당할 부분 |
 |---|---|---|
 | CPU·RAM·일반 시스템 지표 | [`gopsutil/v4`][gopsutil] | 지표 이름·단위·샘플 주기·누락 상태 |
-| Windows CPU/GPU 온도·GPU 부하 | [LibreHardwareMonitor][lhm] + Go `net/http` | JSON→지표 변환, 센서 선택, 상태 관리 |
+| Windows CPU/GPU 온도·GPU 부하 | [LibreHardwareMonitorLib][lhm] 기반 동봉 보조 프로그램 | 로컬 IPC→지표 변환, 센서 선택, 상태·권한·자식 관리 |
 | macOS/Linux 온도 | gopsutil의 제공 센서 우선 | 실제 센서 의미 확인. 없으면 미제공 |
 | USB 호스트 접근 | [`google/gousb`][gousb] / libusb | TURZX 패킷·응답·직렬 전송·복구 |
 | 영상 디코딩·합성·회전·인코딩 | [FFmpeg][ffmpeg] 외부 프로세스 | 안전한 인자 구성·파이프·페이싱·생명주기 |
@@ -462,9 +534,9 @@ NVIDIA 공식 [`go-nvml`][nvml] 바인딩은 현재 Linux만 지원하므로 Win
 선택하지 않는다. Linux NVIDIA 지원이 필요하거나 LHM으로 필요한 GPU 값을 얻지 못할 때만
 해당 플랫폼에 맞는 공급자 도구를 추가한다. [Windows 온도 구현][gopsutil-win]
 
-LHM을 재사용하면 센서 접근·하드웨어 지원을 직접 유지하지 않아도 된다. 대신 별도 프로세스가
-필요하다. 우선 내장 웹서버로 검증하고 설치 부담이 실제 문제가 되면 LHM 기반 보조 프로그램을
-배포하는 방안을 평가한다. v1에서 센서 드라이버나 CLR 브리지를 직접 구현하지 않는다.
+LHM 라이브러리를 재사용해 센서 접근·하드웨어 지원을 직접 유지하지 않는다. 동봉 센서 프로세스는
+우리 앱이 관리하며 사용자가 LHM GUI를 직접 실행하지 않는다. v1에서 센서 드라이버나 Go↔CLR
+브리지를 직접 구현하지 않는다. 보조 프로그램과 런타임·드라이버의 비용도 배포 검증에 포함한다.
 
 ### 책임 경계
 
@@ -503,8 +575,11 @@ cmd → ui → daemon
 
 ### 설치 조건
 
-Go 선택은 유지하지만 배포물은 Go 바이너리만으로 끝나지 않는다. libusb·트레이의 OS 의존성과
-ffmpeg, 선택 소스에 따라 LHM·Codex CLI가 필요하다. OS별 빌드·패키징을 검증한다.
+Go 선택은 유지한다. standalone 배포물에는 libusb·FFmpeg와 Windows 센서 보조 프로그램 및
+필요 런타임을 동봉하는 방향이며, 사용자의 개발 도구 설치 경로를 참조하지 않는다.
+센서·USB 드라이버와 AI 공급자 로그인은 별도 조건이다. Codex·Claude 공식 실행 파일의 동봉 가능 여부와
+업데이트 정책은 아직 결정하지 않았다. 없으면 설정 UI가 설치 필요 상태와 공식 설치 경로를 안내한다.
+OS별 빌드·패키징을 검증한다.
 
 - Windows: 현재 USB 드라이버와 libusb에서 사용할 수 있는 WinUSB 계열 바인딩을 먼저 확인한다.
   변경이 필요하면 대상 VID/PID와 벤더 앱 복구 방법을 설치 절차로 준비한다. 드라이버를 자동 교체하지
@@ -608,26 +683,105 @@ G0의 센서·inbox·계정 검증과 G1의 실제 배경·연속 스트림·표
 
 ### 현재 작업 재개 지점
 
-**2026-09-11 재시작 인계:** 과거 실험을 반복하지 말고 다음 구현부터 이어간다.
+**2026-09-11 현재 중단 지점:** 사용자 요청에 따라 아래 센서 연동 스텝을 완료하고 멈췄다.
+새 지시 전에는 드라이버 설치·AI 사용량·오버레이 연결·장시간 실험을 이어서 진행하지 않는다.
 
 - `internal/metric/hardware.go`와 테스트, USB를 열지 않는 `cmd/turzx-metrics`를 구현했다.
   `gopsutil/v4 v4.26.8` 채택과 `go mod tidy`를 완료했다. CPU는 수집기별 누적 시간 차이로
   계산하고 첫 표본은 `collecting`/null이다. 오류를 가짜 0으로 바꾸지 않는다.
-  GPU·온도는 아직 `unconnected`/null이며 미지원 판정이나 RAM 온도 대체 구현은 없다.
-- 마지막 변경 후 Windows `go test ./...`와 `go vet ./...`가 통과했다.
-  `go run ./cmd/turzx-metrics -samples 3`으로 약 1초 간격 CPU 13~14%, RAM 39~40%를
-  확인했다. 제품 오버레이에는 아직 연결하지 않았다.
-- 다음은 LHM 입력 확인·센서 선택·정규화, RAM 온도 미지원 시 식별된 메인보드 온도 대체,
-  Claude·Codex 사용량 수집과 오버레이 연결이다. 하드웨어는 1초, 사용량 표시는 5초이며
-  원본 조회 주기·신선도는 별도다. 기존 LIVE 진단의 2초 주기는 제품 설정이 아니다.
+  기존 CPU·RAM 수집 동작은 유지하고 센서 ID·라벨·로컬 수신 시각·오류 메타데이터를 추가했다.
+- `tools/turzx-sensors`에 .NET 8 Windows 보조 프로그램을 구현했다. `LibreHardwareMonitorLib 0.9.6`과
+  전이 의존성은 `packages.lock.json`에 고정했다. LHM GUI·웹서버는 필요 없다.
+  기본 1초 JSON 출력, `--stdio` 요청·응답, `--self-test`를 제공한다.
+- `internal/metric/sensor_helper*.go`에 자식 시작·직렬 요청·응답 크기 제한·기한·취소·종료를,
+  `sensor_selection.go`에 센서별 정규화와 명시적 RAM→메인보드 대체를 구현했다.
+  선택 ID 누락·중복·잘못된 종류·null·범위 오류는 해당 항목만 error/null이다.
+  미선택 항목은 unconnected이며 RAM 미지원 확인은 다른 센서 수집을 막지 않는다.
+  수신 시각은 `received_at`, 원본 시각을 모르는 LHM `observed_at`은 null이다.
+  제품의 과거 값 캐시·10초 신선도 판정·렌더 연결은 아직 없다.
+- 최종 Windows `go test ./...`, `go vet ./...`, `go build ./...`, `go test -race ./...` 모두 통과했다.
+  race는 샌드박스 내 GCC 링크 실패 후 승인된 실행에서 통과했다. C# build/publish는 경고 0·오류 0,
+  `--self-test` 숫자·null 검사와 publish 스크립트 구문 검사를 통과했다.
+  Go 센서 패키지·진단 CLI는 `CGO_ENABLED=0`으로 Linux·macOS 크로스 빌드도 성공했다.
+  해당 OS에서 실행한 것은 아니며 Windows C# 센서 helper의 타 OS 지원을 뜻하지 않는다.
+  크로스 빌드 시 Go 모듈 stat 캐시 쓰기 권한 경고가 있었지만 두 빌드의 종료 코드는 0이었다.
+  reviewer의 프로세스 채널 종료·deadline 경계 지적을 수정한 뒤 최종 검토에서 치명적 미해결 문제는 없었다.
+- 실제 RTX 5060의 core load ID는 `/gpu-nvidia/0/load/0`, core temperature는
+  `/gpu-nvidia/0/temperature/0`이다. 최종 Go CLI 3표본에서 GPU 4~5%, 약 33.6~33.7°C,
+  CPU 첫 표본 collecting 후 약 7.7~29.4%, RAM 44%를 관측했다. 짧은 진단값이며 운용 성능 보장은 아니다.
+  `driver_installed=false`, `elevated=false` 상태에서도 GPU 조회에 성공했다. 종료 후 helper 잔류 없음.
+  원본 목록의 `/gpu-nvidia/0/load/3`은 Bus/Memory에 중복되어 있어 선택하지 않는다.
+  미선택 ID 중복이 정상 core 수집을 막지 않는 검사도 추가했다.
+- 개발용 SDK 8.0.425를 `.tools/dotnet`에 준비했다. 시스템 PATH를 변경하지 않았다.
+  `scripts/publish-sensors.ps1`로 self-contained publish를 재현하며 기존 출력 폴더는 덮어쓰지 않는다.
+  최종 검증본은 `artifacts/sensors-win-x64-verified/turzx-sensors.exe`와 같은 폴더의 DLL·런타임이다.
+  `coreclr.dll`·`hostfxr.dll`, runtimeconfig의 includedFrameworks(.NET 8.0.31)를 확인했다.
+  이 폴더는 센서 보조 프로그램만의 개발 산출물이며 전체 제품 ZIP이나 배포·서명 검증 완료본이 아니다.
+  실제 실행 재현은 `go run ./cmd/turzx-metrics -sensor-helper artifacts/sensors-win-x64-verified/turzx-sensors.exe -gpu-usage-sensor /gpu-nvidia/0/load/0 -gpu-temperature-sensor /gpu-nvidia/0/temperature/0 -samples 3`이다.
+- PawnIO Setup 2.2.0의 공식 release URL과 SHA-256
+  `1f519a22e47187f70a1379a48ca604981c4fcf694f4e65b734aaa74a9fba3032`, Authenticode
+  `CN=namazso.eu`를 고정 검증하는 `scripts/fetch-pawnio.ps1`을 추가했다. 센서 publish는
+  `-IncludePawnIO`에서 검증된 파일을 `drivers/PawnIO_setup.exe`로 복사하고 `components.json`을 남긴다.
+  동봉/미동봉 publish와 helper self-test, 변조 파일 거부를 확인했다. 설치 파일은 실행하지 않았으며
+  최초 설정·UAC·설치 후 재조회는 아직 없다.
+- **추가 설치 조건:** LHM 앱과 배포 PC의 .NET 런타임 별도 설치는 필요 없다.
+  현재 PC에는 PawnIO가 확인되지 않았다. CPU·메인보드·메모리 저수준 온도 검증은
+  [PawnIO 공식 배포 안내](https://github.com/namazso/PawnIO)의 드라이버 설치와 권한 확인이 다음 조건이다.
+  이번에는 드라이버·서비스 설치와 자동 권한 상승을 수행하지 않았다. 설치했다고 센서 지원까지 보장하지 않는다.
+  기존 Go·MSYS2/libusb·FFmpeg 개발 환경은 유지한다. AI 계정 연동 조건은 다음 단계에서 확인한다.
+- 2026-09-11 재개 검증에서도 일반 사용자 권한(`elevated=false`)과 PawnIO 미설치
+  (`driver_installed=false`)가 확인됐다. 같은 실행에서 RTX 5060 core load와 core temperature,
+  CPU·RAM 사용률은 계속 정상 수집됐고 CPU·RAM/메인보드 온도만 미연결이었다. helper 종료 후
+  잔류 프로세스는 없었다. self-contained 폴더는 199개 파일, 약 79.2 MB이며 `DOTNET_ROOT`를
+  존재하지 않는 경로로 지정하고 `DOTNET_MULTILEVEL_LOOKUP=0`으로 실행한 `--self-test`도 종료 코드 0이었다.
+- Codex App Server 실측을 시작했다. 공식 계약대로 대화나 모델 호출 없이
+  `initialize`/`initialized` 후 `account/rateLimits/read`가 성공했다. Windows의 Codex CLI 0.154.0은
+  `codex` 10080분 창 사용 25%(2026-09-18 08:36 KST 리셋)를 반환했다. 별도
+  `GPT-5.3-Codex-Spark` 버킷은 300분 창 사용 100%(2026-09-11 16:46 KST 리셋)와 10080분 창
+  사용 44%(2026-09-18 11:46 KST 리셋)를 반환했다. 이는 해당 시각의 진단 관측이며 고정 한도나
+  이후 표시값이 아니다.
+- WSL Rocky-9의 Codex CLI 0.153.4도 같은 조회에 성공했으나 Windows와 다른 Team 계정 범위였고,
+  `codex` 10080분 창 사용 100%, `workspace_member_credits_depleted`, 2026-09-16 08:41 KST 리셋을
+  반환했다. 이 값은 전용 프로필 결정 전의 진단 기록이며 v1 데몬은 해당 WSL 홈을 읽지 않는다.
+  응답의 계정 ID는 문서나 로그에 기록하지 않는다.
+- Windows와 WSL 모두 Claude Code 2.1.268이 설치되어 있으나 기존 사용자 설정에 `statusLine`이 없다.
+  따라서 공식 `rate_limits.five_hour`·`seven_day` 입력 계약은 확인했지만 실제 사용량 수신은 아직
+  연결되지 않았다. v1은 기존 프로필을 수정하지 않고 전용 `CLAUDE_CONFIG_DIR`에서 로그인·statusline
+  어댑터·연결 세대·세션별 inbox를 구성한다. 유휴 상태의 구조화 한도 조회는 지원하지 않는다.
+- 재개 순서: PawnIO 설치·권한 경계 결정 → CPU/RAM/메인보드 센서 실제 목록 확인·명시적 선택 →
+  Claude·Codex 수집 → 오버레이 연결. 하드웨어·전체 합성 1초, 사용량 원본 조회 30초와
+  원본 신선도 구분은 유지한다.
+  첫 테마 코드 시안은 구현했으며 실제 패널 가독성·실데이터 연결, 제품 데몬, 전체 ZIP 패키징은 아직 미완료다.
 - 사용자 요청으로 30분 실험을 중단하고 해당 probe·FFmpeg 정리를 확인했다.
   장시간 테스트를 자동 재개하거나 구현 선행 조건으로 되돌리지 않는다.
   `scripts/measure-stream.ps1`은 선택적 측정 도구이며 정리 보강 후 구문만 검사했다.
-- 사용자는 Pro 업그레이드 후 GPT-5.3-Codex-Spark 한도를 확인했고 작은 구현 위임에 관심이 있다.
-  재개 세션의 실제 서브에이전트 모델 목록을 확인한다. 이전 세션에서는 Spark가 위임 목록에
-  없었다. 앱 모델 선택기 노출만으로 위임 가능하다고 가정하거나 사용했다고 주장하지 않는다.
-- 테마 소재·manifest를 단일 파일로 묶어 웹 UI에서 불러오는 방향을 논의했으나 공개 v1 형식은
-  미확정이고 로더·웹 UI도 미구현이다. 실제 첫 테마로 최소 계약을 검증한 뒤 형식을 확정한다.
+- 이번에는 `spark_explorer`·`spark_worker`와 `reviewer`를 실제 사용했다. Spark 사용량 한도에
+  도달한 뒤 미완료 Go 연동·정규화 수정은 메인이 이어받아 최종 검증했다.
+- 첫 테마 계약을 `assets/backgrounds/azure-ribbon.theme.json`과 `internal/theme` 로더로 구현했다.
+  v1은 1920×462 canvas, 폴더 안의 mp4 배경, Pretendard 내장 참조, palette, region 상대 요소 좌표,
+  알려진 지표 ID와 전체 합성 1000ms를 사용한다. 알 수 없는 필드·중복 JSON 키·중복 요소·경로 탈출·
+  범위 밖 좌표를 거부한다. Windows symlink/junction 탈출은 이 PC의 생성 권한 부족으로 실검증하지 못했다.
+  manifest 기반 실제 렌더러와 설정 웹 UI는 아직 미구현이다.
+- `internal/render.AzurePreviewOverlay`와 probe의 `-theme azure-ribbon`을 추가했다. 화면은 사용자의
+  수정에 따라 시계, `AI 에이전트`, `하드웨어 모니터`로 묶고, 값은 `미리보기 데이터`로 명시한다.
+  기존 `-background` 진단 오버레이는 기본값으로 유지한다. 실제 FFmpeg 합성 PNG를 확인했고 Windows
+  패널에 30초 전송해 27청크, 최대 큐 깊이 1, 정지 응답 C8과 프로세스 정리를 확인했다.
+  실제 패널의 작은 글자 가독성은 사용자 확인 전까지 미검증이다.
+  사용자 피드백으로 시계 전용 왼쪽 열을 만들고 날짜를 `YYYY-MM-DD`로 배치했으며 두 데이터 영역을
+  오른쪽으로 옮겼다. 글자와 게이지를 키우고 Pretendard로 교체했으며 가능한 라벨을 한글화했다.
+  Pretendard는 Regular/SemiBold OTF와 OFL 원문을 `internal/render/fonts/`에 고정 동봉한다.
+  후속 조정에서 AI·하드웨어 영역의 좌우 안쪽 여백을 같은 기준으로 맞추고, 남는 폭은 시계 열에
+  배정해 시각을 더 키웠다. 이 버전도 Windows 패널에 30초 전송해 27청크·정지 응답 C8을 확인했다.
+  첫 패널 확인 의견에 따라 전체 글자 크기를 높이고 특히 리셋 시간·온도·날짜를 확대했으며,
+  날짜 형식은 `YYYY-MM-DD`로 바꿨다. 수정본도 30초 전송해 27청크, 최대 큐 깊이 1,
+  정지 응답 C8과 프로세스 정리를 확인했다. 수정본의 가독성은 사용자 확인을 기다린다.
+  시계에는 초를 추가하고 테마 오버레이를 1초마다 다시 그리도록 변경했다. 최신 30초 패널 전송에서
+  counter 0..29, 27청크·5,474,304바이트, 최대 큐 깊이 1, 최대 청크 대기 1198ms와 정지 응답 C8을
+  확인했다. 최신 초 표시본의 실제 패널 가독성은 사용자 확인 전까지 미검증이다.
+  이후 개별 요소를 가운데 정렬하지 않고 각 영역의 기존 내부 정렬을 유지한 채 콘텐츠 덩어리만
+  중앙으로 이동했다. 시계는 왼쪽 16px·아래 8px, AI는 위 8px, 하드웨어는 위 20px 이동했으며
+  `artifacts/azure-theme-preview-v6-20260911.png`에서 합성 결과를 확인했다. 이 조정본은 아직 실제
+  패널로 전송하지 않았다.
 - 소스·의존성·문서는 로컬 저장했으나 커밋하지 않았다. 미추적 소스·사용자 자산을 보존한다.
   `g1-azure-check.png`는 합성 확인용 임시 이미지로 남아 있으며 필수 입력이 아니다.
 
@@ -692,15 +846,15 @@ G0의 센서·inbox·계정 검증과 G1의 실제 배경·연속 스트림·표
   중단 전 워밍업 이후 표본의 Go+FFmpeg 평균 CPU 약 3.35%(호스트 전체 기준), 최대 working set
   약 181MiB·private 약 292MiB였다. 짧은 관측이므로 정상 운용 자원 보장으로 해석하지 않는다.
   실제 패널 표시 지연의 수치 검증은 별도다.
-  첫 테마 디자인은 아직 확정하지 않았다. 진단 화면 배치를 시안으로 취급하지 않는다.
+  진단 화면 배치는 시안이 아니다. 별도의 `azure-ribbon` 코드 시안은 H264 합성 프레임까지 확인했고
+  실제 패널 가독성과 실데이터 연결 전에는 확정 테마로 취급하지 않는다.
 - 현재 변경은 로컬 파일에 저장됐으며 커밋하지 않았다. 착수 전부터 `AGENTS.md`, `CLAUDE.md`,
   `DESIGN.md`, `internal/turzx/packet.go`의 수정과 미추적 `.idea/`가 있었다.
   전체 diff를 이번 구현 변경으로 간주하거나 기존 수정을 되돌리지 않는다.
 - 작업 방식은 작은 독립 구현만 하위 에이전트에 위임하고 주 에이전트가 통합·검증하는 방향이다.
   큰 문맥을 여러 에이전트가 중복 탐색하도록 나누지 않는다.
-- Codex 목록에 없던 필수 `ponytail` 스킬은
-  `C:\Users\youhyun\.claude\plugins\cache\ponytail\ponytail\4.9.0\skills\ponytail\SKILL.md`에서
-  찾아 읽고 적용했다. 재개 시 실제 존재 여부를 확인한다. 공통 `CLAUDE.md`는 지정된
+- 필수 `ponytail` 스킬은 사용자 범위
+  `C:\Users\youhyun\.codex\skills\ponytail\SKILL.md`에서 읽고 적용했다. 공통 `CLAUDE.md`는 지정된
   `C:\Workspace\CLAUDE.md`와 `C:\Users\youhyun\workspace\CLAUDE.md` 모두 없었다.
 
 ### G0~G2 필수 재현 사례
@@ -752,12 +906,15 @@ G1이 실패하면 비트레이트·청크·버퍼·인코더를 조정한다. �
 
 [upstream]: https://github.com/mathoudebine/turing-smart-screen-python/blob/3.10.0/library/lcd/lcd_comm_turing_usb.py
 [claude]: https://code.claude.com/docs/en/statusline
+[claude-auth]: https://code.claude.com/docs/en/authentication
 [codex]: https://learn.chatgpt.com/docs/app-server
 [filters]: https://ffmpeg.org/ffmpeg-filters.html#overlay
 [ffmpeg]: https://ffmpeg.org/ffmpeg.html#Advanced-options
 [go-png]: https://go.dev/src/image/png/writer.go
 [lhm]: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
 [lhm-http]: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/master/LibreHardwareMonitor.Windows.Forms/Utilities/HttpServer.cs
+[lhm-pawnio]: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/v0.9.6/LibreHardwareMonitorLib/PawnIo/PawnIo.cs
+[dotnet-deploy]: https://learn.microsoft.com/en-us/dotnet/core/deploying/
 [gopsutil]: https://github.com/shirou/gopsutil
 [gopsutil-win]: https://github.com/shirou/gopsutil/blob/master/sensors/sensors_windows.go
 [ghw]: https://github.com/jaypipes/ghw#inspecting--monitoring
