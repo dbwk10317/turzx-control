@@ -9,10 +9,10 @@
 - USB 분리·재연결, 응답 복구, PNG fallback, 지연 및 중단 경로를 측정한다.
 - 마지막 프레임까지의 유한 스트림 재생과 안정성·장기 실행 검증을 수행한다. 승인되지 않은 무인 장기 실행은 자동 재시작하지 않는다.
 - Windows 실제 설치에서 로그인 자동 시작 enable·disable·status와 재부팅 후 복구를 검증한다.
-- standalone ZIP에 실행 파일·FFmpeg·센서 helper·필요 런타임을 포함하고 공식 소스·서명·해시와 깨끗한 Windows PC 설치를 확인한다.
+- standalone ZIP은 `scripts/package-zip.ps1`로 만든다. 앱·helper·설치 스크립트·라이선스 고지를 담고, 받은 쪽에서 푼 ZIP의 설치 스크립트가 같이 담긴 helper를 고정 해시로 검증하는 것까지 확인했다(90.8MB, 고지 27건). 남은 것: Authenticode 서명과 SmartScreen 평판, 깨끗한 Windows PC 설치 확인, 그리고 아래 두 가지 배포 결정.
 - 첫 설정 UI에서 센서 선택, snapshot 경로 계약, 표준 사용자 동작과 최초 관리자 승인 흐름을 확인한다.
 - Windows/macOS/Linux별 빌드·실행·권한·서명 검증을 수행한다.
-- 라이선스 notices와 corresponding source 제공 절차를 배포물에 포함한다.
+- 라이선스 고지는 ZIP의 `NOTICES/`에 들어가고 `-SourceOffer` 없이는 패키징이 안 되게 했다. 결정이 필요한 두 가지: (1) 동봉한 FFmpeg essentials 빌드는 GPL이므로 그 빌드의 corresponding source를 실제로 제공할 경로가 필요하다. LGPL 빌드로 바꾸거나 FFmpeg를 동봉하지 않는 선택지도 있다. (2) 기본 테마 `smon-halloween.mp4`를 배포물에 재배포할 권리가 있는지 확인해야 한다.
 - 2026-09-14 리뷰 반영 helper를 `artifacts/sensors-task-20260914-owner`로 publish하고 `setup-sensor-task.ps1`의 manifest 해시를 갱신했다. 리뷰에서 들어간 `WriteAtomic`의 owner 설정이 쓰기 핸들에 `WRITE_OWNER`가 없어 모든 snapshot 쓰기를 실패시켰다(태스크 종료 코드 1). 닫힌 파일에서, 그것도 기본 정책으로 이미 관리자 소유가 아닐 때만 설정하도록 고쳤다. 남은 확인: 두 번째 Windows 사용자 계정의 snapshot 읽기(`BUILTIN\Users` 읽기 ACE)와 예약 작업 재시작 설정.
 - Claude CLI 실제 동작 확인이 필요한 항목: `claude auth login --claudeai`가 headless로 URL을 출력하는지(출력하면 UI에 표시해야 함), statusline 명령의 exit code를 Claude Code가 어떻게 처리하는지, Windows에서 `powershell.exe -EncodedCommand` 경유가 비 ASCII statusline 출력을 깨뜨리지 않는지.
 - 2026-09-14 재부팅 확인에서 나온 검은 콘솔 창은 helper를 `WinExe`로 바꿔 해결했다. 실제 설치에서 창과 conhost가 없는 것을 확인했다. helper가 콘솔 출력을 내지 않으므로 실패가 보이지 않아, 설치 스크립트가 태스크 시작 후 snapshot 생성을 확인하고 실패 시 태스크를 되돌린다.

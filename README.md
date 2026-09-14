@@ -189,4 +189,23 @@ libusb도 별도 고지가 필요하다. 최종 standalone ZIP을 만들기 전�
 `internal/render`의 Go 코드에서 그린다. 설정 UI는 127.0.0.1에만 열리지만 같은 PC의
 다른 프로세스와 사용자 계정은 접근할 수 있으므로 공유 PC에서는 이 점을 고려한다. 사용자 제공 배경의 외부 재배포 권리는 공개 배포 전에 별도로 확인한다.
 빌드 실행 파일과 설치 패키지 ZIP은 루트 `bin/`에 두며 Git에서 제외한다.
+
+standalone ZIP은 다음으로 만든다. 앱 payload, 센서 helper publish, 설치 스크립트,
+동봉 구성 요소의 라이선스 고지를 한데 모은다.
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\package-zip.ps1 `
+  -HelperDirectory .\artifacts\sensors-task-<date> `
+  -FFmpegLicense '<FFmpeg 빌드>\LICENSE' `
+  -LibusbLicense '<MSYS2>\ucrt64\share\licenses\libusb\COPYING' `
+  -SourceOffer '<corresponding source 제공 경로>' `
+  -OutputPath .\bin\turzx-control-dev-<date>.zip
+```
+
+`-SourceOffer`는 필수다. GPL·LGPL 바이너리를 동봉하므로 corresponding source를
+어떻게 제공하는지 적지 않은 배포물은 조건을 만족하지 못한다. Go 모듈과 NuGet
+패키지의 고지는 모듈 캐시와 `.nuspec`에서 모으며, 라이선스를 찾지 못하면 패키징이
+실패한다. 스크립트는 ZIP에 넣은 설치 스크립트의 고정 해시가 같이 넣은 helper와
+일치하는 상태를 그대로 담으므로, 받은 쪽에서 설치할 때 payload가 검증된다.
+출력물은 서명되지 않은 개발 빌드이며 정식 배포본이 아니다.
 테스트와 코드만으로 기능 검증을 재현할 수 있어야 한다.
