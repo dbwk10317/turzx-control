@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "id": "smon-halloween",
+  "name": "Halloween Moonlit",
+  "canvas": {
+    "x": 0,
+    "y": 0,
+    "width": 1920,
+    "height": 462
+  },
+  "background": {
+    "path": "smon-halloween.mp4",
+    "fit": "cover"
+  },
+  "font": {
+    "family": "Pretendard",
+    "regular": "pretendard.regular",
+    "semibold": "pretendard.semibold"
+  },
+  "display_refresh_ms": 1000,
+  "palette": {
+    "panel": "#100B20A8",
+    "edge": "#FFC85792",
+    "ink": "#FFF7E6",
+    "muted": "#D8C9E8",
+    "gold": "#FFC857",
+    "violet": "#A78BFA",
+    "cyan": "#67E8F9"
+  },
+  "regions": {
+    "clock": {"x": 24, "y": 20, "width": 366, "height": 190},
+    "ai_agent": {"x": 410, "y": 20, "width": 860, "height": 190},
+    "hw_monitor": {"x": 1290, "y": 20, "width": 606, "height": 190}
+  },
+  "elements": [
+    {"id":"clock-time","region":"clock","kind":"text","source":"clock.time","bounds":{"x":22,"y":96,"width":320,"height":68},"font":"pretendard.semibold","size":64,"color":"ink"},
+    {"id":"clock-date","region":"clock","kind":"text","source":"clock.date","bounds":{"x":24,"y":29,"width":320,"height":24},"font":"pretendard.semibold","size":20,"color":"gold"},
+    {"id":"clock-scene","region":"clock","kind":"text","text":"할로윈의 밤","bounds":{"x":24,"y":125,"width":180,"height":22},"size":19,"color":"muted"},
+    {"id":"clock-live","region":"clock","kind":"text","source":"status.live","bounds":{"x":24,"y":161,"width":330,"height":20},"font":"pretendard.semibold","size":16,"color":"gold"},
+
+    {"id":"ai-title","region":"ai_agent","kind":"text","text":"AI 사용량 · 미리보기","bounds":{"x":28,"y":29,"width":300,"height":22},"font":"pretendard.semibold","size":18,"color":"muted"},
+    {"id":"codex-label","region":"ai_agent","kind":"text","text":"CODEX","bounds":{"x":28,"y":58,"width":150,"height":24},"font":"pretendard.semibold","size":20,"color":"gold"},
+    {"id":"claude-label","region":"ai_agent","kind":"text","text":"CLAUDE","bounds":{"x":448,"y":58,"width":150,"height":24},"font":"pretendard.semibold","size":20,"color":"violet"},
+    {"id":"codex-5h-period","region":"ai_agent","kind":"text","text":"5시간","bounds":{"x":28,"y":88,"width":60,"height":20},"size":17,"color":"muted"},
+    {"id":"codex-5h-remaining","region":"ai_agent","kind":"text","source":"codex.five_hour.remaining","bounds":{"x":76,"y":88,"width":70,"height":30},"font":"pretendard.semibold","size":28,"color":"ink"},
+    {"id":"codex-5h-reset","region":"ai_agent","kind":"text","source":"codex.five_hour.reset","bounds":{"x":154,"y":88,"width":190,"height":20},"size":16,"color":"muted"},
+    {"id":"codex-5h-bar","region":"ai_agent","kind":"bar","source":"codex.five_hour.remaining","bounds":{"x":28,"y":105,"width":326,"height":4},"color":"gold"},
+    {"id":"codex-week-period","region":"ai_agent","kind":"text","text":"주간","bounds":{"x":28,"y":143,"width":60,"height":20},"size":17,"color":"muted"},
+    {"id":"codex-week-remaining","region":"ai_agent","kind":"text","source":"codex.week.remaining","bounds":{"x":76,"y":143,"width":70,"height":30},"font":"pretendard.semibold","size":28,"color":"ink"},
+    {"id":"codex-week-reset","region":"ai_agent","kind":"text","source":"codex.week.reset","bounds":{"x":154,"y":143,"width":190,"height":20},"size":16,"color":"muted"},
+    {"id":"codex-week-bar","region":"ai_agent","kind":"bar","source":"codex.week.remaining","bounds":{"x":28,"y":160,"width":326,"height":4},"color":"gold"},
+    {"id":"claude-5h-period","region":"ai_agent","kind":"text","text":"5시간","bounds":{"x":448,"y":88,"width":60,"height":20},"size":17,"color":"muted"},
+    {"id":"claude-5h-remaining","region":"ai_agent","kind":"text","source":"claude.five_hour.remaining","bounds":{"x":496,"y":88,"width":70,"height":30},"font":"pretendard.semibold","size":28,"color":"ink"},
+    {"id":"claude-5h-reset","region":"ai_agent","kind":"text","source":"claude.five_hour.reset","bounds":{"x":574,"y":88,"width":190,"height":20},"size":16,"color":"muted"},
+    {"id":"claude-5h-bar","region":"ai_agent","kind":"bar","source":"claude.five_hour.remaining","bounds":{"x":448,"y":105,"width":326,"height":4},"color":"violet"},
+    {"id":"claude-week-period","region":"ai_agent","kind":"text","text":"주간","bounds":{"x":448,"y":143,"width":60,"height":20},"size":17,"color":"muted"},
+    {"id":"claude-week-remaining","region":"ai_agent","kind":"text","source":"claude.week.remaining","bounds":{"x":496,"y":143,"width":70,"height":30},"font":"pretendard.semibold","size":28,"color":"ink"},
+    {"id":"claude-week-reset","region":"ai_agent","kind":"text","source":"claude.week.reset","bounds":{"x":574,"y":143,"width":190,"height":20},"size":16,"color":"muted"},
+    {"id":"claude-week-bar","region":"ai_agent","kind":"bar","source":"claude.week.remaining","bounds":{"x":448,"y":160,"width":326,"height":4},"color":"violet"},
+
+    {"id":"hw-title","region":"hw_monitor","kind":"text","text":"하드웨어 · 미리보기","bounds":{"x":28,"y":29,"width":300,"height":22},"font":"pretendard.semibold","size":18,"color":"muted"},
+    {"id":"cpu-label","region":"hw_monitor","kind":"text","text":"CPU","bounds":{"x":28,"y":63,"width":60,"height":20},"size":16,"color":"muted"},
+    {"id":"cpu-usage","region":"hw_monitor","kind":"text","source":"cpu.usage","bounds":{"x":28,"y":99,"width":80,"height":32},"font":"pretendard.semibold","size":30,"color":"ink"},
+    {"id":"cpu-temperature","region":"hw_monitor","kind":"text","source":"cpu.temperature","bounds":{"x":28,"y":127,"width":80,"height":24},"size":20,"color":"gold"},
+    {"id":"cpu-bar","region":"hw_monitor","kind":"bar","source":"cpu.usage","bounds":{"x":28,"y":146,"width":158,"height":4},"color":"gold"},
+    {"id":"gpu-label","region":"hw_monitor","kind":"text","text":"GPU","bounds":{"x":214,"y":63,"width":60,"height":20},"size":16,"color":"muted"},
+    {"id":"gpu-usage","region":"hw_monitor","kind":"text","source":"gpu.usage","bounds":{"x":214,"y":99,"width":80,"height":32},"font":"pretendard.semibold","size":30,"color":"ink"},
+    {"id":"gpu-temperature","region":"hw_monitor","kind":"text","source":"gpu.temperature","bounds":{"x":214,"y":127,"width":80,"height":24},"size":20,"color":"cyan"},
+    {"id":"gpu-bar","region":"hw_monitor","kind":"bar","source":"gpu.usage","bounds":{"x":214,"y":146,"width":158,"height":4},"color":"cyan"},
+    {"id":"ram-label","region":"hw_monitor","kind":"text","text":"RAM","bounds":{"x":400,"y":63,"width":60,"height":20},"size":16,"color":"muted"},
+    {"id":"ram-usage","region":"hw_monitor","kind":"text","source":"ram.usage","bounds":{"x":400,"y":99,"width":80,"height":32},"font":"pretendard.semibold","size":30,"color":"ink"},
+    {"id":"ram-temperature","region":"hw_monitor","kind":"text","source":"ram.temperature","bounds":{"x":400,"y":127,"width":80,"height":24},"size":20,"color":"violet"},
+    {"id":"ram-bar","region":"hw_monitor","kind":"bar","source":"ram.usage","bounds":{"x":400,"y":146,"width":158,"height":4},"color":"violet"}
+  ]
+}

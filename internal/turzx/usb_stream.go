@@ -152,6 +152,9 @@ func (u *USB) SendH264Stream(ctx context.Context, r io.ReadCloser, opts VideoOpt
 			if queueErr := u.waitVideoQueue(streamCtx, opts.QueueTimeout, report); queueErr != nil {
 				return errors.Join(queueErr, context.Cause(streamCtx))
 			}
+			if opts.OnProgress != nil {
+				opts.OnProgress(VideoProgress{At: time.Now(), Chunks: report.Chunks, Bytes: report.Bytes, MaxQueueDepth: report.MaxQueueDepth})
+			}
 		}
 	})
 }

@@ -89,8 +89,39 @@ internal static class Program
                 return 1;
             }
 
+            if (!ValidateSnapshotSelfTest(snapshot, out reason))
+            {
+                WriteLineStderr(reason ?? "snapshot self-test validation failed");
+                return 1;
+            }
+
             WriteJsonLine(stdout, snapshot);
             return 0;
+        }
+
+        if (!string.IsNullOrEmpty(parse.SnapshotPath))
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                WriteLineStderr("snapshot mode requires Windows");
+                return 1;
+            }
+
+            if (!IsElevated())
+            {
+                WriteLineStderr("snapshot mode requires an elevated process");
+                return 1;
+            }
+
+            try
+            {
+                SnapshotFile.ValidatePath(parse.SnapshotPath);
+            }
+            catch (Exception ex)
+            {
+                WriteLineStderr(ex.Message);
+                return 1;
+            }
         }
 
         using var cts = new CancellationTokenSource();
@@ -121,6 +152,11 @@ internal static class Program
                 return await RunStdioLoopAsync(computer, stdout, driverState, cts.Token);
             }
 
+            if (!string.IsNullOrEmpty(parse.SnapshotPath))
+            {
+                return await RunSnapshotLoopAsync(computer, driverState, parse.SnapshotPath, cts.Token);
+            }
+
             return await RunSampleLoopAsync(computer, stdout, driverState, parse.Samples, cts.Token);
         }
         catch (OperationCanceledException)
@@ -138,11 +174,13 @@ internal static class Program
         }
     }
 
-    private static (bool StdioMode, bool SelfTest, int Samples, int ParseCode, string ErrorMessage) ParseArguments(string[] args)
+    private static (bool StdioMode, bool SelfTest, string SnapshotPath, int Samples, bool SamplesSpecified, int ParseCode, string ErrorMessage) ParseArguments(string[] args)
     {
         var stdioMode = false;
         var selfTest = false;
+        var snapshotPath = string.Empty;
         var samples = DefaultSamples;
+        var samplesSpecified = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -154,35 +192,57 @@ internal static class Program
                 case "--self-test":
                     selfTest = true;
                     break;
+                case "--snapshot-file":
+                    if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+                    {
+                        return (false, false, string.Empty, DefaultSamples, false, 2, "--snapshot-file requires an absolute path");
+                    }
+
+                    if (!string.IsNullOrEmpty(snapshotPath))
+                    {
+                        return (false, false, string.Empty, DefaultSamples, false, 2, "--snapshot-file may be specified only once");
+                    }
+
+                    snapshotPath = args[++i];
+                    break;
                 case "--samples":
                     if (i + 1 >= args.Length)
                     {
-                        return (false, false, DefaultSamples, 2, "--samples requires numeric argument");
+                        return (false, false, string.Empty, DefaultSamples, false, 2, "--samples requires numeric argument");
                     }
 
                     if (!int.TryParse(args[i + 1], out var parsed) || parsed < 0)
                     {
-                        return (false, false, DefaultSamples, 2, "--samples requires a non-negative integer");
+                        return (false, false, string.Empty, DefaultSamples, false, 2, "--samples requires a non-negative integer");
                     }
 
                     samples = parsed;
+                    samplesSpecified = true;
                     i++;
                     break;
                 default:
-                    return (false, false, DefaultSamples, 2, $"unknown argument: {args[i]}");
+                    return (false, false, string.Empty, DefaultSamples, false, 2, $"unknown argument: {args[i]}");
             }
         }
 
-        return (stdioMode, selfTest, samples, 0, string.Empty);
+        var modes = (stdioMode ? 1 : 0) + (selfTest ? 1 : 0) + (!string.IsNullOrEmpty(snapshotPath) ? 1 : 0) + (samplesSpecified && !string.IsNullOrEmpty(snapshotPath) ? 1 : 0);
+        if (modes > 1)
+        {
+            return (false, false, string.Empty, DefaultSamples, false, 2, "--snapshot-file cannot be combined with --stdio, --samples, or --self-test");
+        }
+
+        return (stdioMode, selfTest, snapshotPath, samples, samplesSpecified, 0, string.Empty);
     }
 
     private static void WriteUsage()
     {
         WriteLineStderr("Usage:");
         WriteLineStderr("  turzx-sensors [--samples N] [--stdio] [--self-test]");
+        WriteLineStderr("  turzx-sensors --snapshot-file <absolute path>");
         WriteLineStderr("  --samples N   number of samples, default 5, 0 for continuous");
         WriteLineStderr("  --stdio       read one 'sample' line per snapshot");
         WriteLineStderr("  --self-test   validate JSON schema without hardware access");
+        WriteLineStderr("  --snapshot-file  write elevated hardware snapshots every second");
     }
 
     private static async Task<int> RunSampleLoopAsync(
@@ -203,6 +263,23 @@ internal static class Program
                 return 0;
             }
 
+            await Task.Delay(SleepMilliseconds, token);
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> RunSnapshotLoopAsync(
+        Computer computer,
+        SensorDriverState driverState,
+        string snapshotPath,
+        CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            var snapshot = CollectSnapshot(computer, driverState, new List<string>(driverState.Errors));
+            var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+            SnapshotFile.WriteAtomic(snapshotPath, json);
             await Task.Delay(SleepMilliseconds, token);
         }
 
@@ -624,6 +701,63 @@ internal static class Program
         }
 
         return true;
+    }
+
+    private static bool ValidateSnapshotSelfTest(SensorSnapshot snapshot, out string? reason)
+    {
+        reason = null;
+        var directory = Path.Combine(Path.GetTempPath(), $"turzx-sensors-selftest-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var target = Path.Combine(directory, "snapshot.json");
+
+        try
+        {
+            var rendered = JsonSerializer.Serialize(snapshot, JsonOptions);
+            SnapshotFile.WriteAtomic(target, rendered);
+            var persisted = File.ReadAllText(target);
+            var parsed = JsonSerializer.Deserialize<SensorSnapshot>(persisted, JsonOptions);
+            string? parseReason = null;
+            if (parsed is null || !ValidateSelfTest(parsed, out parseReason))
+            {
+                reason = parseReason ?? "snapshot self-test parse failed";
+                return false;
+            }
+
+            try
+            {
+                SnapshotFile.WriteAtomic(directory, rendered);
+                reason = "snapshot self-test failure path unexpectedly succeeded";
+                return false;
+            }
+            catch (IOException)
+            {
+                // A directory target must fail before a temporary file is made.
+            }
+
+            if (Directory.EnumerateFiles(directory, "*.tmp", SearchOption.TopDirectoryOnly).Any())
+            {
+                reason = "snapshot self-test left a temporary file";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            reason = $"snapshot self-test failed: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // The validation result above remains the useful failure.
+            }
+        }
     }
 
     private static SensorType ParseSensorType(string type)

@@ -16,6 +16,7 @@ import (
 const (
 	CanvasWidth  = 1920
 	CanvasHeight = 462
+	DefaultID    = "smon-halloween"
 )
 
 type Manifest struct {

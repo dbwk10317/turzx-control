@@ -127,6 +127,7 @@ func Start(ctx context.Context, options Options) (*Stream, error) {
 	args := ffmpegArgs(options.Background, options.FrameRate)
 	runCtx, cancel := context.WithCancelCause(ctx)
 	cmd := exec.CommandContext(runCtx, options.FFmpeg, args...)
+	configureProcess(cmd)
 	s := &Stream{
 		cmd:     cmd,
 		ctx:     runCtx,

@@ -24,7 +24,16 @@ import (
 // of the metric package and live usage sources. It embeds Pretendard v1.3.9
 // from https://github.com/orioncactus/pretendard under the SIL OFL 1.1 in
 // fonts/OFL.txt so the preview has no system-font dependency.
-func AzurePreviewOverlay(elapsed time.Duration, counter uint64) ([]byte, error) {
+func AzureOverlay(snapshot func() Dashboard) Overlay {
+	return func(elapsed time.Duration, counter uint64) ([]byte, error) {
+		if snapshot == nil {
+			return nil, fmt.Errorf("azure overlay: nil dashboard snapshot")
+		}
+		return azureDashboardOverlay(snapshot(), elapsed, counter, false)
+	}
+}
+
+func azureDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64, preview bool) ([]byte, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, landscapeWidth, landscapeHeight))
 	glass := color.NRGBA{R: 3, G: 19, B: 27, A: 174}
 	glassEdge := color.NRGBA{R: 96, G: 165, B: 250, A: 64}
@@ -32,41 +41,51 @@ func AzurePreviewOverlay(elapsed time.Duration, counter uint64) ([]byte, error) 
 	blue := color.NRGBA{R: 96, G: 165, B: 250, A: 255}
 	ink := color.NRGBA{R: 230, G: 247, B: 255, A: 255}
 	muted := color.NRGBA{R: 145, G: 169, B: 184, A: 255}
-
 	drawRounded(img, image.Rect(28, 28, 1892, 434), 24, glass)
 	drawRounded(img, image.Rect(28, 28, 1892, 434), 24, glassEdge)
-	// Restore the broad translucent rail over its hairline edge.
 	drawRounded(img, image.Rect(30, 30, 1890, 432), 22, glass)
 	draw.Draw(img, image.Rect(430, 66, 431, 397), image.NewUniform(color.NRGBA{R: 96, G: 165, B: 250, A: 62}), image.Point{}, draw.Src)
 	draw.Draw(img, image.Rect(1230, 66, 1231, 397), image.NewUniform(color.NRGBA{R: 96, G: 165, B: 250, A: 62}), image.Point{}, draw.Src)
-
+	base := d.At
+	if base.IsZero() {
+		base = time.Now()
+	}
 	text(img, true, 64, 134, "현재 시각", 18, muted)
-	clock := time.Date(2026, 9, 11, 8, 42, 36, 0, time.Local).Add(elapsed).Format("15:04:05")
-	text(img, true, 58, 236, clock, 80, ink)
-	text(img, false, 64, 284, "2026-09-11", 26, muted)
+	text(img, true, 58, 236, base.Format("15:04:05"), 80, ink)
+	text(img, false, 64, 284, base.Format("2006-01-02"), 26, muted)
 	drawRounded(img, image.Rect(62, 312, 322, 345), 16, color.NRGBA{R: 34, G: 211, B: 238, A: 30})
 	drawRounded(img, image.Rect(74, 324, 82, 332), 4, cyan)
-	text(img, true, 94, 337, fmt.Sprintf("실시간  %s  #%06d", formatElapsed(elapsed), counter), 16, cyan)
-	text(img, false, 1680, 72, fmt.Sprintf("미리보기 데이터 #%06d", counter), 15, muted)
-
+	text(img, true, 94, 337, fmt.Sprintf("실시간 %s  #%06d", formatElapsed(elapsed), counter), 16, cyan)
+	if preview {
+		text(img, false, 1680, 72, fmt.Sprintf("미리보기 데이터 #%06d", counter), 15, muted)
+	}
 	text(img, true, 478, 104, "AI 에이전트", 18, muted)
 	text(img, true, 478, 146, "CODEX", 30, cyan)
 	text(img, true, 838, 146, "CLAUDE", 30, blue)
-	drawQuota(img, 478, 186, "5시간", "74%", "초기화까지 2시간 18분", 0.74, cyan)
-	drawQuota(img, 478, 310, "주간", "61%", "초기화까지 3일 6시간", 0.61, cyan)
-	drawQuota(img, 838, 186, "5시간", "88%", "초기화까지 1시간 42분", 0.88, blue)
-	drawQuota(img, 838, 310, "주간", "49%", "초기화까지 4일 11시간", 0.49, blue)
-
+	drawQuota(img, 478, 186, "5시간", d.Codex.FiveHour.Value, d.Codex.FiveHour.Reset, d.Codex.FiveHour.Received, d.Codex.FiveHour.Fraction, cyan)
+	drawQuota(img, 478, 310, "주간", d.Codex.Weekly.Value, d.Codex.Weekly.Reset, d.Codex.Weekly.Received, d.Codex.Weekly.Fraction, cyan)
+	drawQuota(img, 838, 186, "5시간", d.Claude.FiveHour.Value, d.Claude.FiveHour.Reset, d.Claude.FiveHour.Received, d.Claude.FiveHour.Fraction, blue)
+	drawQuota(img, 838, 310, "주간", d.Claude.Weekly.Value, d.Claude.Weekly.Reset, d.Claude.Weekly.Received, d.Claude.Weekly.Fraction, blue)
 	text(img, true, 1278, 92, "하드웨어 모니터", 18, muted)
-	drawMetric(img, 1278, 130, "CPU", "34%", "52°C", 0.34, cyan)
-	drawMetric(img, 1278, 230, "GPU", "67%", "61°C", 0.67, blue)
-	drawMetric(img, 1278, 330, "메모리", "58%", "48°C", 0.58, cyan)
-
+	drawMetric(img, 1278, 130, d.Hardware.CPU.Label, d.Hardware.CPU.Usage, d.Hardware.CPU.Temperature, d.Hardware.CPU.Fraction, cyan)
+	drawMetric(img, 1278, 230, d.Hardware.GPU.Label, d.Hardware.GPU.Usage, d.Hardware.GPU.Temperature, d.Hardware.GPU.Fraction, blue)
+	drawMetric(img, 1278, 330, d.Hardware.RAM.Label, d.Hardware.RAM.Usage, d.Hardware.RAM.Temperature, d.Hardware.RAM.Fraction, cyan)
 	var encoded bytes.Buffer
 	if err := png.Encode(&encoded, img); err != nil {
 		return nil, err
 	}
 	return encoded.Bytes(), nil
+}
+
+func previewDashboard(at time.Time) Dashboard {
+	return Dashboard{At: at,
+		Codex:    ProviderDashboard{FiveHour: Quota{Value: "74%", Reset: "초기화까지 2시간 18분", Fraction: .74}, Weekly: Quota{Value: "61%", Reset: "초기화까지 3일 6시간", Fraction: .61}},
+		Claude:   ProviderDashboard{FiveHour: Quota{Value: "88%", Reset: "초기화까지 1시간 42분", Fraction: .88}, Weekly: Quota{Value: "49%", Reset: "초기화까지 4일 11시간", Fraction: .49}},
+		Hardware: HardwareDashboard{CPU: Metric{Label: "CPU", Usage: "34%", Temperature: "52°C", Fraction: .34}, GPU: Metric{Label: "GPU", Usage: "67%", Temperature: "61°C", Fraction: .67}, RAM: Metric{Label: "RAM", Usage: "58%", Temperature: "48°C", Fraction: .58}}}
+}
+
+func AzurePreviewOverlay(elapsed time.Duration, counter uint64) ([]byte, error) {
+	return azureDashboardOverlay(previewDashboard(time.Date(2026, 9, 11, 8, 42, 36, 0, time.Local).Add(elapsed)), elapsed, counter, true)
 }
 
 var (
@@ -106,11 +125,12 @@ func text(img draw.Image, bold bool, x, y int, value string, size float64, c col
 	d.DrawString(value)
 }
 
-func drawQuota(img draw.Image, x, y int, period, value, reset string, fraction float64, accent color.NRGBA) {
+func drawQuota(img draw.Image, x, y int, period, value, reset, received string, fraction float64, accent color.NRGBA) {
 	text(img, false, x, y, period, 18, color.NRGBA{R: 145, G: 169, B: 184, A: 255})
 	text(img, true, x, y+45, value, 42, color.NRGBA{R: 230, G: 247, B: 255, A: 255})
 	text(img, false, x+112, y+42, reset, 19, color.NRGBA{R: 145, G: 169, B: 184, A: 255})
 	drawRail(img, x, y+62, 344, fraction, accent)
+	text(img, false, x+212, y+82, received, 13, color.NRGBA{R: 145, G: 169, B: 184, A: 255})
 }
 
 func drawMetric(img draw.Image, x, y int, label, usage, temp string, fraction float64, accent color.NRGBA) {

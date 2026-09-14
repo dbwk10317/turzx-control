@@ -30,6 +30,12 @@ func TestLoadValid(t *testing.T) {
 	}
 }
 
+func TestDefaultTheme(t *testing.T) {
+	if DefaultID != "smon-halloween" {
+		t.Fatalf("default theme = %q", DefaultID)
+	}
+}
+
 func TestLoadAzureRibbonManifest(t *testing.T) {
 	source := filepath.Join("..", "..", "assets", "backgrounds", "azure-ribbon.theme.json")
 	data, err := os.ReadFile(source)
@@ -50,6 +56,46 @@ func TestLoadAzureRibbonManifest(t *testing.T) {
 	}
 	if m.ID != "azure-ribbon" || m.DisplayRefresh != 1000 || len(m.Elements) == 0 {
 		t.Fatalf("unexpected azure-ribbon contract: id=%q refresh=%d elements=%d", m.ID, m.DisplayRefresh, len(m.Elements))
+	}
+}
+
+func TestLoadSmonHalloweenManifest(t *testing.T) {
+	source := filepath.Join("..", "..", "assets", "backgrounds", "smon-halloween.theme.json")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := t.TempDir()
+	p := filepath.Join(d, "smon-halloween.theme.json")
+	if err := os.WriteFile(p, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "smon-halloween.mp4"), []byte("video"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != "smon-halloween" || m.DisplayRefresh != 1000 || len(m.Elements) < 25 {
+		t.Fatalf("unexpected smon-halloween contract: id=%q refresh=%d elements=%d", m.ID, m.DisplayRefresh, len(m.Elements))
+	}
+	wantSources := []string{
+		"clock.time", "clock.date", "status.live",
+		"codex.five_hour.remaining", "codex.five_hour.reset", "codex.week.remaining", "codex.week.reset",
+		"claude.five_hour.remaining", "claude.five_hour.reset", "claude.week.remaining", "claude.week.reset",
+		"cpu.usage", "cpu.temperature", "gpu.usage", "gpu.temperature", "ram.usage", "ram.temperature",
+	}
+	seen := make(map[string]bool)
+	for _, e := range m.Elements {
+		if e.Source != "" {
+			seen[e.Source] = true
+		}
+	}
+	for _, source := range wantSources {
+		if !seen[source] {
+			t.Errorf("missing Halloween source %q", source)
+		}
 	}
 }
 

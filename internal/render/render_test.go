@@ -177,6 +177,35 @@ func TestAzurePreviewOverlay(t *testing.T) {
 	}
 }
 
+func TestHalloweenPreviewOverlay(t *testing.T) {
+	a, err := HalloweenPreviewOverlay(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := HalloweenPreviewOverlay(2*time.Second, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(a, b) {
+		t.Fatal("preview counter update did not change PNG")
+	}
+	img, err := png.Decode(bytes.NewReader(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := img.Bounds().Size(); got.X != landscapeWidth || got.Y != landscapeHeight {
+		t.Fatalf("preview size = %v", got)
+	}
+	_, _, _, alpha := img.At(0, 0).RGBA()
+	if alpha != 0 {
+		t.Fatalf("preview background alpha = %d, want 0", alpha)
+	}
+	_, _, _, alpha = img.At(100, 100).RGBA()
+	if alpha == 0 {
+		t.Fatal("preview panel is fully transparent")
+	}
+}
+
 func TestStartUsesSelectedOverlay(t *testing.T) {
 	t.Setenv("GO_WANT_RENDER_HELPER", "1")
 	called := make(chan struct{}, 1)

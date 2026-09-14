@@ -6,11 +6,16 @@
 /.appdata/
 /.dotnet-cli/
 /.gocache/
+/.localappdata/
+/.idea/
+/artifacts/
+/bin/
 **/bin/
 **/obj/
 
 # 실측·실험 산출물
 *.mp4
+!/assets/backgrounds/*.mp4
 *.h264
 
 .DS_Store

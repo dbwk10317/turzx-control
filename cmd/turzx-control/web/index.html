@@ -1,0 +1,110 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="turzx-token" content="{{.Token}}">
+  <title>TURZX Control</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="TURZX Control 홈">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>TURZX <strong>CONTROL</strong></span>
+    </a>
+    <div class="preview-pill"><span aria-hidden="true"></span> 개발 미리보기</div>
+  </header>
+
+  <main id="main-content">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">LOCAL CONTROL CENTER</p>
+        <h1 id="page-title">패널 상태를 한눈에,<br>설정은 필요한 만큼만.</h1>
+        <p class="lead">AI 사용량과 PC 센서를 TURZX 화면에 표시합니다. 모든 설정은 이 PC 안에서만 처리됩니다.</p>
+      </div>
+      <div class="system-summary" aria-label="시스템 요약">
+        <span class="summary-label">현재 상태</span>
+        <strong id="summary-state">상태 확인 중</strong>
+        <span class="summary-detail">연결 상태와 센서 수집 결과를 확인하세요.</span>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="connection-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-index">01</p>
+          <h2 id="connection-title">AI 계정 연결</h2>
+        </div>
+        <p>각 서비스의 전용 프로필만 사용합니다. 기존 앱과 CLI 설정은 건드리지 않습니다.</p>
+      </div>
+
+      <div class="provider-grid">
+        <article class="card provider-card">
+          <div class="card-head">
+            <div class="provider-icon codex-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M8.5 4.2A7.8 7.8 0 0 1 19.2 9l-3.4 2M15.5 19.8A7.8 7.8 0 0 1 4.8 15l3.4-2M7.2 8.2l4.8-2.8 4.8 2.8v5.6L12 16.6l-4.8-2.8Z"/></svg>
+            </div>
+            <span class="status" id="codex-status" data-status="disconnected" role="status" aria-live="polite"><span aria-hidden="true"></span> 연결 필요</span>
+          </div>
+          <div class="card-copy">
+            <h3>Codex</h3>
+            <p id="codex-message">ChatGPT 브라우저 로그인으로 5시간·주간 사용량을 연결합니다.</p>
+          </div>
+          <div class="card-actions">
+            <button class="primary-button" id="codex-connect" type="button">Codex 연결</button>
+            <a class="secondary-button hidden" id="codex-continue" href="#" target="_blank" rel="noopener noreferrer">브라우저에서 계속</a>
+            <button class="secondary-button hidden" id="codex-disconnect" type="button">연결 해제</button>
+          </div>
+        </article>
+
+        <article class="card provider-card">
+          <div class="card-head">
+            <div class="provider-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3 4.8 7.2v9.6L12 21l7.2-4.2V7.2Z"/><path d="m8.5 10 3.5 6 3.5-6"/></svg>
+            </div>
+            <span class="status" id="claude-status" data-status="disconnected" role="status" aria-live="polite"><span aria-hidden="true"></span> 연결 필요</span>
+          </div>
+          <div class="card-copy">
+            <h3>Claude</h3>
+            <p id="claude-message">Claude 브라우저 로그인과 전용 statusline 어댑터를 연결합니다.</p>
+          </div>
+          <div class="card-actions">
+            <button class="primary-button" id="claude-connect" type="button">Claude 연결</button>
+            <button class="secondary-button hidden" id="claude-disconnect" type="button">연결 해제</button>
+          </div>
+        </article>
+      </div>
+      <p class="feedback" id="login-feedback" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="section" aria-labelledby="hardware-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-index">02</p>
+          <h2 id="hardware-title">하드웨어 모니터</h2>
+        </div>
+        <p>현재 PC의 사용률과 선택한 센서를 표시합니다.</p>
+      </div>
+      <div class="sensor-list">
+        <div class="sensor-row"><span>CPU</span><strong id="cpu-live">—</strong><span>사용률 · 온도</span></div>
+        <div class="sensor-row"><span>GPU</span><strong id="gpu-live">—</strong><span>사용률 · 온도</span></div>
+        <div class="sensor-row"><span id="ram-label">RAM</span><strong id="ram-live">—</strong><span>사용률 · 온도</span></div>
+      </div>
+      <p class="feedback">선택하지 않았거나 읽을 수 없는 센서는 —로 표시합니다.</p>
+    </section>
+    <section class="section" aria-labelledby="display-title">
+      <div class="section-heading">
+        <div><p class="section-index">03</p><h2 id="display-title">패널 출력</h2></div>
+        <span class="status" id="display-status" role="status"><span aria-hidden="true"></span> 준비 중</span>
+      </div>
+      <p id="display-message" class="feedback" role="status">출력 상태를 확인하고 있습니다.</p>
+    </section>
+  </main>
+
+  <footer><span>TURZX Control</span><span>로컬 주소에서만 실행 · 자격 증명 직접 저장 안 함</span></footer>
+</body>
+</html>

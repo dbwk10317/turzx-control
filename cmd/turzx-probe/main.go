@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/dbwk10317/turzx-control/internal/metric"
 	"github.com/dbwk10317/turzx-control/internal/turzx"
 )
 
@@ -38,10 +39,23 @@ func run(args []string) error {
 	pngPath := flags.String("png", "", "optional native 462x1920 RGBA PNG to display")
 	h264Path := flags.String("h264", "", "optional finite H264 Annex B stream to display")
 	background := flags.String("background", "", "local MP4 background for the live diagnostic overlay")
-	theme := flags.String("theme", "", "optional live overlay theme: azure-ribbon (preview data)")
+	theme := flags.String("theme", "", "optional live overlay theme: azure-ribbon or smon-halloween (preview data)")
+	liveDataFlag := flags.Bool("live-data", false, "use live Codex, Claude, and hardware snapshots for the theme overlay")
+	codexBin := flags.String("codex-bin", "codex", "path to the Codex CLI executable")
+	codexHome := flags.String("codex-home", "", "dedicated absolute CODEX_HOME for live data")
+	bucket := flags.String("bucket", "codex", "exact Codex rate-limit bucket ID")
+	claudeInboxFile := flags.String("claude-inbox-file", "", "exact Claude statusline inbox envelope file")
+	claudeBinding := flags.String("claude-binding", "", "expected Claude statusline binding ID")
+	sensorHelper := flags.String("sensor-helper", "", "path to local LHM sensor helper executable")
+	cpuTemperatureSensor := flags.String("cpu-temperature-sensor", "", "helper sensor ID for CPU temperature")
+	gpuUsageSensor := flags.String("gpu-usage-sensor", "", "helper sensor ID for GPU usage")
+	gpuTemperatureSensor := flags.String("gpu-temperature-sensor", "", "helper sensor ID for GPU temperature")
+	ramTemperatureSensor := flags.String("ram-temperature-sensor", "", "helper sensor ID for RAM temperature")
+	motherboardTemperatureSensor := flags.String("motherboard-temperature-sensor", "", "helper motherboard sensor ID used when RAM fallback is enabled")
+	ramTemperatureUnsupported := flags.Bool("ram-temperature-unsupported", false, "disable RAM temperature and use motherboard fallback when configured")
 	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable for the live diagnostic")
 	duration := flags.Duration("duration", 30*time.Second, "live diagnostic duration")
-	chunkWait := flags.Duration("chunk-wait", 1500*time.Millisecond, "live chunk assembly and queue wait limit")
+	chunkWait := flags.Duration("chunk-wait", 3*time.Second, "live chunk assembly and queue wait limit")
 	renderOnly := flags.String("render-only", "", "save live encoder output to a new H264 file without opening USB")
 	pattern := flags.Bool("test-pattern", false, "display static diagnostic color bands (not a theme)")
 	timeout := flags.Duration("timeout", 2*time.Second, "per-transfer I/O timeout")
@@ -70,12 +84,29 @@ func run(args []string) error {
 	if *duration <= 0 || *chunkWait <= 0 || ((*renderOnly != "" || *theme != "") && *background == "") {
 		return fmt.Errorf("require positive duration/chunk-wait and -background for -render-only or -theme")
 	}
-	if *theme != "" && *theme != "azure-ribbon" {
+	if *theme != "" && *theme != "azure-ribbon" && *theme != "smon-halloween" {
 		return fmt.Errorf("unknown theme %q", *theme)
+	}
+	var liveCfg *liveDataConfig
+	if *liveDataFlag {
+		liveCfg = &liveDataConfig{
+			CodexBin: *codexBin, CodexHome: *codexHome, CodexBucket: *bucket,
+			ClaudeInboxFile: *claudeInboxFile, ClaudeBinding: *claudeBinding,
+			SensorHelper: *sensorHelper,
+			Selection: metric.HardwareSensorSelection{
+				CPUTemperatureSensor: *cpuTemperatureSensor, GPUUsageSensor: *gpuUsageSensor,
+				GPUTemperatureSensor: *gpuTemperatureSensor, RAMTemperatureSensor: *ramTemperatureSensor,
+				MotherboardTemperatureSensor: *motherboardTemperatureSensor,
+				RAMTemperatureUnsupported:    *ramTemperatureUnsupported,
+			},
+		}
+		if err := liveCfg.validate(*theme); err != nil {
+			return err
+		}
 	}
 	if *background != "" {
 		return runLive(*background, *theme, *ffmpeg, *renderOnly, *duration, *timeout, *flush, *chunkWait,
-			turzx.VideoOptions{FrameRate: byte(*frameRate), Brightness: byte(*brightness), QueueTimeout: *queueTimeout})
+			turzx.VideoOptions{FrameRate: byte(*frameRate), Brightness: byte(*brightness), QueueTimeout: *queueTimeout}, liveCfg)
 	}
 	var payload []byte
 	var h264 *os.File

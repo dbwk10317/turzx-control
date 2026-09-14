@@ -18,6 +18,7 @@ func TestRejectOptionsBeforeUSB(t *testing.T) {
 		{"-background", "unused.mp4", "-h264", "unused.h264"},
 		{"-render-only", "unused.h264"},
 		{"-theme", "azure-ribbon"},
+		{"-theme", "smon-halloween"},
 		{"-background", "unused.mp4", "-theme", "unknown"},
 		{"-duration", "0"},
 		{"-chunk-wait", "0"},

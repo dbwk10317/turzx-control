@@ -34,6 +34,15 @@ type VideoOptions struct {
 	FrameRate    byte
 	Brightness   byte
 	QueueTimeout time.Duration
+	OnProgress   func(VideoProgress)
+}
+
+// VideoProgress is emitted only after a chunk and its queue response succeed.
+type VideoProgress struct {
+	At            time.Time
+	Chunks        int
+	Bytes         int64
+	MaxQueueDepth byte
 }
 
 // VideoReport records H264 transfer values needed for G1 checks.
