@@ -195,16 +195,45 @@ corresponding source까지 확보해야 하지만, 직접 빌드하면 이 스�
 커밋이 곧 완전한 빌드 방법이 된다. `internal/render`가 실제로 쓰는 구성 요소만
 켜므로 산출물도 작다.
 
+빌드는 `scripts/build-ffmpeg.sh`가 하고, 검증과 기록은 `scripts/build-ffmpeg.ps1`이
+한다. 빌드는 툴체인만 있으면 어디서든 돌고, 검증은 Windows 실행 파일을 실제로
+돌려야 하므로 Windows에서 한다.
+
+MSYS2에서 바로 빌드하고 검증까지:
+
 ```powershell
 powershell.exe -NoProfile -File .\scripts\build-ffmpeg.ps1 `
   -Msys2Root '<MSYS2 설치 경로>' -OutputDirectory .\bin
 ```
 
+WSL·Linux·macOS에서 크로스 빌드한 뒤 Windows에서 검증하려면:
+
+```bash
+# 준비: mingw-w64 크로스 툴체인, nasm, make, git
+#   Debian/Ubuntu: sudo apt install mingw-w64 nasm make git
+#   macOS:         brew install mingw-w64 nasm
+scripts/build-ffmpeg.sh --work /tmp/ffmpeg-build --out /tmp/ffmpeg-out `
+  --cross-prefix x86_64-w64-mingw32-
+```
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\build-ffmpeg.ps1 `
+  -FromBuildOutput <복사해 온 출력 디렉터리> -OutputDirectory .\bin
+```
+
 x264와 FFmpeg를 고정한 ref로 받아 정적 링크로 빌드하고, `bin\ffmpeg.exe`와 해결된
-커밋·configure·해시를 담은 `bin\ffmpeg-build.json`을 남긴다. 빌드 후에는 실제 파이프라인
-그대로(배경 MP4 + stdin PNG → Annex B H264) 연기 시험을 돌리므로, 구성 요소를 하나
-빠뜨리면 제품이 아니라 빌드가 실패한다. MSYS2에 `make`·`git`·`diffutils`·`nasm`이
-없으면 설치 명령을 알려주고 중단한다.
+커밋·configure·해시를 담은 `bin\ffmpeg-build.json`을 남긴다. 검증은 실제 파이프라인
+그대로(배경 MP4 + stdin PNG → Annex B H264) 돌리므로, 구성 요소를 하나 빠뜨리면
+제품이 아니라 빌드가 실패한다. 필요한 도구가 없으면 설치 명령을 알려주고 중단한다.
+
+이 빌드는 한 번만 하면 된다. FFmpeg·x264 보안 업데이트를 반영할 때, 렌더 파이프라인이
+켜지 않은 구성 요소를 쓰게 될 때, 대상 아키텍처가 늘 때만 다시 한다. `bin/`은 정리
+대상이므로 산출물과 매니페스트는 오래 남는 곳에 함께 보관한다.
+
+Windows에서 MSYS2로 빌드하면 FFmpeg `configure`가 만드는 임시 탐지 실행 파일을
+안티바이러스가 오탐·격리할 수 있다. 탐지 결과가 바뀌어 조용히 다른 구성으로 빌드될
+수 있으므로, 그런 환경에서는 WSL이나 다른 머신에서 크로스 빌드하고 산출물만 가져와
+검증한다.
 
 standalone ZIP은 다음으로 만든다. 앱 payload, 센서 helper publish, 설치 스크립트,
 동봉 구성 요소의 라이선스 고지를 한데 모은다.
