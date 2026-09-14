@@ -41,8 +41,8 @@ $env:CC = "$msys\ucrt64\bin\gcc.exe"
 $env:PKG_CONFIG = "$msys\ucrt64\bin\pkg-config.exe"
 $go = (Get-Command go -ErrorAction SilentlyContinue).Source
 if (-not $go) { $go = 'C:\Program Files\Go\bin\go.exe' }
-& $go build -ldflags '-H=windowsgui' -o bin\turzx-control.exe .\cmd\turzx-control
-& $go build -o bin\turzx-claude-status.exe .\cmd\turzx-claude-status
+& $go build -ldflags '-H=windowsgui' -o bin\app\turzx-control.exe .\cmd\turzx-control
+& $go build -o bin\app\turzx-claude-status.exe .\cmd\turzx-claude-status
 ```
 
 Windows 실행 파일 옆에 MSYS2 UCRT64의 `bin\libusb-1.0.dll`을 둔다. 영상 재생에는
@@ -188,7 +188,7 @@ libusb도 별도 고지가 필요하다. 최종 standalone ZIP을 만들기 전�
 함께 추적한다. `theme.json`은 디자인 참조 문서이며 데몬은 레이아웃을
 `internal/render`의 Go 코드에서 그린다. 설정 UI는 127.0.0.1에만 열리지만 같은 PC의
 다른 프로세스와 사용자 계정은 접근할 수 있으므로 공유 PC에서는 이 점을 고려한다. 사용자 제공 배경의 외부 재배포 권리는 공개 배포 전에 별도로 확인한다.
-빌드 실행 파일과 설치 패키지 ZIP은 루트 `bin/`에 두며 Git에서 제외한다.
+빌드 산출물은 루트 `bin/`에 두며 Git에서 제외한다. 배포 payload는 `bin/app/`에만 두고, ZIP 같은 결과물은 그 바깥에 둔다. payload 디렉터리에 하위 디렉터리나 다른 파일이 섞이면 그대로 배포물에 들어가므로 패키징이 거부한다.
 
 배포에 동봉할 FFmpeg는 직접 빌드한다. 남의 빌드를 재배포하면 그 빌드의
 corresponding source까지 확보해야 하지만, 직접 빌드하면 이 스크립트와 고정한 두
@@ -203,7 +203,7 @@ MSYS2에서 바로 빌드하고 검증까지:
 
 ```powershell
 powershell.exe -NoProfile -File .\scripts\build-ffmpeg.ps1 `
-  -Msys2Root '<MSYS2 설치 경로>' -OutputDirectory .\bin
+  -Msys2Root '<MSYS2 설치 경로>' -OutputDirectory .\bin\app
 ```
 
 WSL·Linux·macOS에서 크로스 빌드한 뒤 Windows에서 검증하려면:
@@ -218,7 +218,7 @@ scripts/build-ffmpeg.sh --work /tmp/ffmpeg-build --out /tmp/ffmpeg-out `
 
 ```powershell
 powershell.exe -NoProfile -File .\scripts\build-ffmpeg.ps1 `
-  -FromBuildOutput <복사해 온 출력 디렉터리> -OutputDirectory .\bin
+  -FromBuildOutput <복사해 온 출력 디렉터리> -OutputDirectory .\bin\app
 ```
 
 x264와 FFmpeg를 고정한 ref로 받아 정적 링크로 빌드하고, `bin\ffmpeg.exe`와 해결된

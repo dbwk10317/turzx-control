@@ -14,12 +14,13 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Build')][string]$Msys2Root,
     [Parameter(ParameterSetName = 'Build')][string]$FFmpegRef = 'n9.0.1',
     [Parameter(ParameterSetName = 'Build')][string]$X264Ref = 'stable',
-    [Parameter(ParameterSetName = 'Build')][string]$WorkDirectory = 'bin/ffmpeg-build',
+    # Never inside the app payload directory: packaging copies that whole tree.
+    [Parameter(ParameterSetName = 'Build')][string]$WorkDirectory = 'artifacts/ffmpeg-build',
     # A directory build-ffmpeg.sh produced elsewhere: ffmpeg.exe, the two
     # .commit files, configure.txt and build.env. Use this when the build ran
     # in WSL or on another machine.
     [Parameter(Mandatory = $true, ParameterSetName = 'Verify')][string]$FromBuildOutput,
-    [string]$OutputDirectory = 'bin',
+    [string]$OutputDirectory = 'bin/app',
     # Any .mp4 drives the verification's background input.
     [string]$SmokeBackground = 'assets/backgrounds/azure-ribbon.mp4'
 )

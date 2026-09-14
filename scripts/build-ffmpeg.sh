@@ -46,6 +46,22 @@ if [ -n "$cross_prefix" ]; then
     command -v "${cross_prefix}gcc" >/dev/null 2>&1 || { echo "missing cross compiler: ${cross_prefix}gcc" >&2; exit 2; }
 fi
 
+# The PNG decoder needs zlib for the target. Without this check the failure
+# surfaces minutes later as an opaque FFmpeg configure error.
+probe=$(mktemp -d)
+printf '#include <zlib.h>
+int main(void){return zlibVersion() == 0;}
+' > "$probe/z.c"
+if ! "${cross_prefix}gcc" "$probe/z.c" -lz -o "$probe/z" >/dev/null 2>&1; then
+    rm -rf "$probe"
+    echo "zlib for the target is missing; the PNG decoder needs it." >&2
+    echo "  Rocky/RHEL:    sudo dnf install mingw64-zlib mingw64-zlib-static" >&2
+    echo "  Debian/Ubuntu: sudo apt install mingw-w64" >&2
+    echo "  MSYS2 UCRT64:  pacman -S mingw-w64-ucrt-x86_64-zlib" >&2
+    exit 2
+fi
+rm -rf "$probe"
+
 mkdir -p "$work" "$out"
 work=$(cd "$work" && pwd)
 out=$(cd "$out" && pwd)
@@ -119,6 +135,11 @@ fetch ffmpeg https://git.ffmpeg.org/ffmpeg.git "$ffmpeg_ref"
 )
 
 cp ffmpeg/ffmpeg.exe "$out/ffmpeg.exe"
+# License texts from the exact sources this build used, so the package carries
+# the notices for what it actually ships.
+cp ffmpeg/COPYING.GPLv3 "$out/ffmpeg-COPYING.GPLv3.txt"
+cp ffmpeg/LICENSE.md "$out/ffmpeg-LICENSE.md"
+cp x264/COPYING "$out/x264-COPYING.txt"
 git -C x264 rev-parse HEAD > "$out/x264.commit"
 git -C ffmpeg rev-parse HEAD > "$out/ffmpeg.commit"
 printf '%s\n' "$configure_flags" > "$out/configure.txt"

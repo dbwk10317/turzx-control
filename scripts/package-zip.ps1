@@ -4,18 +4,20 @@
 # are not a release; sign the executables before treating the output as one.
 [CmdletBinding()]
 param(
-    [string]$AppDirectory = 'bin',
+    # Payload only: build outputs and packages live beside it, not inside it.
+    [string]$AppDirectory = 'bin/app',
     [Parameter(Mandatory = $true)][string]$HelperDirectory,
     # The theme background to ship. Passed explicitly and copied in after the
     # payload, so a personal, non-redistributable theme sitting in the local
     # run directory can never reach a package.
     [Parameter(Mandatory = $true)][string]$Background,
-    # Bundled GPL/LGPL binaries ship with their own license texts; pass the copy
-    # that belongs to the exact build being packaged, not a generic one.
-    [Parameter(Mandatory = $true)][string]$FFmpegLicense,
+    # The build-ffmpeg.sh output directory for the bundled ffmpeg.exe: it carries
+    # the license texts and the commits of the exact sources it was built from,
+    # which is what the GPL corresponding source offer has to match.
+    [Parameter(Mandatory = $true)][string]$FFmpegBuildOutput,
+    # Bundled LGPL binaries ship with their own license text; pass the copy that
+    # belongs to the exact build being packaged, not a generic one.
     [Parameter(Mandatory = $true)][string]$LibusbLicense,
-    # Identifies the exact FFmpeg source the bundled binary was built from.
-    [string]$FFmpegReadme,
     # How the recipient obtains the corresponding source for the GPL parts.
     # Required: a GPL binary distribution without this offer is not compliant.
     [Parameter(Mandatory = $true)][string]$SourceOffer,
@@ -36,11 +38,15 @@ function Resolve-Input([string]$Path, [string]$Label) {
 
 $AppDirectory = Resolve-Input $AppDirectory 'App payload'
 $HelperDirectory = Resolve-Input $HelperDirectory 'Sensor helper publish'
-$FFmpegLicense = Resolve-Input $FFmpegLicense 'FFmpeg license'
 $LibusbLicense = Resolve-Input $LibusbLicense 'libusb license'
+$FFmpegBuildOutput = Resolve-Input $FFmpegBuildOutput 'FFmpeg build output'
 $Background = Resolve-Input $Background 'Theme background'
 if ([IO.Path]::GetExtension($Background) -ne '.mp4') { throw "Theme background must be an .mp4 file: $Background" }
-if ($FFmpegReadme) { $FFmpegReadme = Resolve-Input $FFmpegReadme 'FFmpeg build readme' }
+foreach ($name in @('ffmpeg.exe', 'ffmpeg.commit', 'x264.commit', 'configure.txt', 'ffmpeg-COPYING.GPLv3.txt', 'x264-COPYING.txt')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $FFmpegBuildOutput $name) -PathType Leaf)) {
+        throw "FFmpeg build output is missing ${name}: $FFmpegBuildOutput"
+    }
+}
 $DotnetRoot = Resolve-Input $DotnetRoot '.NET root'
 $NuGetRoot = Resolve-Input $NuGetRoot 'NuGet package root'
 if (-not $GoModCache) { $GoModCache = (& go env GOMODCACHE) }
@@ -54,6 +60,12 @@ foreach ($required in @('turzx-control.exe', 'turzx-claude-status.exe', 'ffmpeg.
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $HelperDirectory 'turzx-sensors.exe') -PathType Leaf)) { throw 'Sensor helper publish is missing turzx-sensors.exe' }
+# The payload is copied whole, so a build scratch directory left inside it would
+# ship silently. It is flat today; keep it that way rather than guess intent.
+$nested = Get-ChildItem -LiteralPath $AppDirectory -Directory
+if ($nested) {
+    throw "App payload must contain no subdirectories; found $($nested.Name -join ', ') in $AppDirectory"
+}
 
 $staging = Join-Path ([IO.Path]::GetTempPath()) ('turzx-package-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $payload = New-Item -ItemType Directory -Path (Join-Path $staging 'turzx-control')
@@ -78,13 +90,27 @@ try {
     $index.Add('')
     $index.Add('turzx-control, turzx-claude-status, turzx-sensors: GPL-3.0-or-later, see LICENSE.')
     $index.Add('')
-    Copy-Item -LiteralPath $FFmpegLicense -Destination (Join-Path $notices 'ffmpeg-LICENSE.txt')
-    $index.Add('FFmpeg (App/ffmpeg.exe): NOTICES/ffmpeg-LICENSE.txt')
-    # GPL corresponding source is only identifiable against the exact build, so
-    # the bundled binary's own version and configuration are recorded here.
-    $buildInfo = & (Join-Path $app 'ffmpeg.exe') -hide_banner -version 2>&1
-    $buildInfo += & (Join-Path $app 'ffmpeg.exe') -hide_banner -buildconf 2>&1
-    if ($FFmpegReadme) { $buildInfo += ''; $buildInfo += Get-Content -LiteralPath $FFmpegReadme }
+    # The notices must describe the binary that actually ships, so the payload's
+    # ffmpeg.exe has to be the one this build output produced.
+    $payloadFFmpeg = (Get-FileHash -LiteralPath (Join-Path $app 'ffmpeg.exe') -Algorithm SHA256).Hash
+    $builtFFmpeg = (Get-FileHash -LiteralPath (Join-Path $FFmpegBuildOutput 'ffmpeg.exe') -Algorithm SHA256).Hash
+    if ($payloadFFmpeg -ne $builtFFmpeg) {
+        throw 'App payload ffmpeg.exe differs from the build output; run build-ffmpeg.ps1 to install the verified binary first.'
+    }
+    foreach ($name in @('ffmpeg-COPYING.GPLv3.txt', 'ffmpeg-LICENSE.md', 'x264-COPYING.txt')) {
+        $source = Join-Path $FFmpegBuildOutput $name
+        if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-Item -LiteralPath $source -Destination (Join-Path $notices $name) }
+    }
+    $index.Add('FFmpeg (App/ffmpeg.exe): NOTICES/ffmpeg-COPYING.GPLv3.txt, NOTICES/ffmpeg-LICENSE.md')
+    $index.Add('x264, statically linked into App/ffmpeg.exe: NOTICES/x264-COPYING.txt')
+    # GPL corresponding source is only identifiable against the exact build.
+    $buildInfo = @('FFmpeg built from source for this product; see scripts/build-ffmpeg.sh in the source distribution.', '')
+    $buildInfo += 'ffmpeg commit: ' + (Get-Content -LiteralPath (Join-Path $FFmpegBuildOutput 'ffmpeg.commit') -Raw).Trim() + ' (https://git.ffmpeg.org/ffmpeg.git)'
+    $buildInfo += 'x264 commit:   ' + (Get-Content -LiteralPath (Join-Path $FFmpegBuildOutput 'x264.commit') -Raw).Trim() + ' (https://code.videolan.org/videolan/x264.git)'
+    $buildInfo += ''
+    $buildInfo += 'configure: ' + (Get-Content -LiteralPath (Join-Path $FFmpegBuildOutput 'configure.txt') -Raw).Trim()
+    $buildInfo += ''
+    $buildInfo += & (Join-Path $app 'ffmpeg.exe') -hide_banner -version 2>&1
     Set-Content -LiteralPath (Join-Path $notices 'ffmpeg-BUILD.txt') -Value $buildInfo -Encoding UTF8
     $index.Add('FFmpeg build and source identification: NOTICES/ffmpeg-BUILD.txt')
     Copy-Item -LiteralPath $LibusbLicense -Destination (Join-Path $notices 'libusb-COPYING.txt')
