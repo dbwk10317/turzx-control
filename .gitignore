@@ -15,7 +15,8 @@
 
 # 실측·실험 산출물
 *.mp4
-!/assets/backgrounds/*.mp4
+# 재배포 가능한 테마만 추적한다. smon-halloween은 개인 자산이라 제외한다.
+!/assets/backgrounds/azure-ribbon.mp4
 *.h264
 
 .DS_Store

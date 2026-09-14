@@ -196,12 +196,16 @@ standalone ZIP은 다음으로 만든다. 앱 payload, 센서 helper publish, �
 ```powershell
 powershell.exe -NoProfile -File .\scripts\package-zip.ps1 `
   -HelperDirectory .\artifacts\sensors-task-<date> `
+  -Background .\assets\backgrounds\azure-ribbon.mp4 `
   -FFmpegLicense '<FFmpeg 빌드>\LICENSE' `
   -LibusbLicense '<MSYS2>\ucrt64\share\licenses\libusb\COPYING' `
   -SourceOffer '<corresponding source 제공 경로>' `
   -OutputPath .\bin\turzx-control-dev-<date>.zip
 ```
 
+`-Background`도 필수다. 배포물에 들어갈 테마를 명령줄에서 명시하고, 앱 payload에
+들어 있던 다른 `.mp4`는 복사 후 제거한다. 개인 테마 `smon-halloween.mp4`는
+재배포 대상이 아니므로 Git에서도 추적하지 않으며 배포물에 넣지 않는다.
 `-SourceOffer`는 필수다. GPL·LGPL 바이너리를 동봉하므로 corresponding source를
 어떻게 제공하는지 적지 않은 배포물은 조건을 만족하지 못한다. Go 모듈과 NuGet
 패키지의 고지는 모듈 캐시와 `.nuspec`에서 모으며, 라이선스를 찾지 못하면 패키징이
