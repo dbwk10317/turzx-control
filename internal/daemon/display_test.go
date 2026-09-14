@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -173,8 +174,13 @@ func TestDisplayOptionsValidate(t *testing.T) {
 
 func TestThemesMatchValidate(t *testing.T) {
 	ids := Themes()
-	if len(ids) != 2 || ids[0] != "azure-ribbon" || ids[1] != DefaultTheme {
+	if !slices.Equal(ids, []string{"azure-ribbon", "smon-halloween"}) {
 		t.Fatalf("Themes() = %v", ids)
+	}
+	// The default must be a real theme; it changed once a theme's background
+	// asset turned out not to be redistributable.
+	if !slices.Contains(ids, DefaultTheme) {
+		t.Fatalf("DefaultTheme %q is not a supported theme", DefaultTheme)
 	}
 	for _, id := range ids {
 		opts := testDisplayOptions(testBackground(t))

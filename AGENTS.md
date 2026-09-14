@@ -12,7 +12,7 @@ AI 사용량은 Codex와 Claude 각각 데몬 전용 프로필에서 수집한�
 
 USB 응답은 항상 읽는다. 시작 시 IN 큐를 비우고 stale 응답이 쌓이면 IN 큐를 비운 뒤 sync를 다시 보낸다. PNG 전송 데이터는 8-bit RGBA이며 IHDR color type 6을 확인한다. 스트림 중단·EOF·장치 오류에서는 정지와 응답을 처리하고 재연결 경로를 유지한다.
 
-기본 테마 ID는 `smon-halloween`이다. 배포물은 필요한 실행 파일과 런타임을 동봉한 standalone ZIP을 목표로 하며 Windows 실행 파일과 동봉 코드는 Authenticode 서명·SmartScreen 평판을 고려한다. macOS 실행 코드는 서명·공증을 고려한다. 미서명 개발본을 정식 배포본으로 취급하지 않는다.
+기본 테마 ID는 `azure-ribbon`이다. 기본값은 배경 자산을 배포물에 동봉할 수 있는 테마여야 한다. `smon-halloween`은 개인 자산이라 재배포하지 않으며 Git에서도 추적하지 않는다. 배포물은 필요한 실행 파일과 런타임을 동봉한 standalone ZIP을 목표로 하며 Windows 실행 파일과 동봉 코드는 Authenticode 서명·SmartScreen 평판을 고려한다. macOS 실행 코드는 서명·공증을 고려한다. 미서명 개발본을 정식 배포본으로 취급하지 않는다.
 
 GPL-3.0-or-later를 따른다. 새 소스 파일에는 SPDX 헤더와 필요한 출처 고지를 둔다.
 

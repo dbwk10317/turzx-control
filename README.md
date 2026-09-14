@@ -15,7 +15,7 @@ Windows 중심 크로스플랫폼 데몬이다. Windows 데몬이 USB와 센서�
 - `cmd/turzx-probe`: USB·PNG·영상 경로를 확인하는 독립 진단 도구
 - `cmd/turzx-metrics`, `cmd/turzx-codex`: USB 없이 센서와 Codex 수집기를 진단하는 CLI
 - `tools/turzx-sensors`: Windows 권한 상승 센서 보조 프로그램
-- 기본 테마는 `smon-halloween`이며 `azure-ribbon`도 지원한다.
+- 기본 테마는 `azure-ribbon`이며 `smon-halloween`도 지원한다. `smon-halloween`의 배경 영상은 개인 자산이라 저장소와 배포물에 포함하지 않는다.
 
 Windows 컨트롤은 `설정 열기`와 `종료` 트레이 메뉴를 제공한다. 자동 시작은 현재
 사용자의 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`에 실행 파일 경로를
@@ -55,10 +55,10 @@ FFmpeg `bin\ffmpeg.exe`를 지정한다. FFmpeg 실행 파일은 별도 라이�
 `-save-config`로 사용자 설정 디렉터리의 `settings.json`에 기록한다.
 
 ```powershell
-$background = (Resolve-Path '.\assets\backgrounds\smon-halloween.mp4').Path
+$background = (Resolve-Path '.\assets\backgrounds\azure-ribbon.mp4').Path
 $ffmpeg = 'C:\tools\ffmpeg\bin\ffmpeg.exe'
 & $go run .\cmd\turzx-control `
-  -background $background -ffmpeg $ffmpeg -theme smon-halloween `
+  -background $background -ffmpeg $ffmpeg -theme azure-ribbon `
   -save-config
 ```
 
@@ -189,6 +189,22 @@ libusb도 별도 고지가 필요하다. 최종 standalone ZIP을 만들기 전�
 `internal/render`의 Go 코드에서 그린다. 설정 UI는 127.0.0.1에만 열리지만 같은 PC의
 다른 프로세스와 사용자 계정은 접근할 수 있으므로 공유 PC에서는 이 점을 고려한다. 사용자 제공 배경의 외부 재배포 권리는 공개 배포 전에 별도로 확인한다.
 빌드 실행 파일과 설치 패키지 ZIP은 루트 `bin/`에 두며 Git에서 제외한다.
+
+배포에 동봉할 FFmpeg는 직접 빌드한다. 남의 빌드를 재배포하면 그 빌드의
+corresponding source까지 확보해야 하지만, 직접 빌드하면 이 스크립트와 고정한 두
+커밋이 곧 완전한 빌드 방법이 된다. `internal/render`가 실제로 쓰는 구성 요소만
+켜므로 산출물도 작다.
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\build-ffmpeg.ps1 `
+  -Msys2Root '<MSYS2 설치 경로>' -OutputDirectory .\bin
+```
+
+x264와 FFmpeg를 고정한 ref로 받아 정적 링크로 빌드하고, `bin\ffmpeg.exe`와 해결된
+커밋·configure·해시를 담은 `bin\ffmpeg-build.json`을 남긴다. 빌드 후에는 실제 파이프라인
+그대로(배경 MP4 + stdin PNG → Annex B H264) 연기 시험을 돌리므로, 구성 요소를 하나
+빠뜨리면 제품이 아니라 빌드가 실패한다. MSYS2에 `make`·`git`·`diffutils`·`nasm`이
+없으면 설치 명령을 알려주고 중단한다.
 
 standalone ZIP은 다음으로 만든다. 앱 payload, 센서 helper publish, 설치 스크립트,
 동봉 구성 요소의 라이선스 고지를 한데 모은다.

@@ -39,8 +39,10 @@ const (
 	fallbackHeld     = "H264 재시도 한도 초과 · PNG 정적 화면 유지"
 )
 
-// DefaultTheme is the theme used when none is configured.
-const DefaultTheme = "smon-halloween"
+// DefaultTheme is the theme used when none is configured. It must stay a theme
+// whose background asset ships with the product; smon-halloween is a personal
+// asset and is not redistributed.
+const DefaultTheme = "azure-ribbon"
 
 var themeOverlays = map[string]func(func() render.Dashboard) render.Overlay{
 	"azure-ribbon":   render.AzureOverlay,
