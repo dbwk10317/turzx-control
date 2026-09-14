@@ -21,12 +21,8 @@ func ReadSensorSnapshot(path string, now time.Time) (HelperSnapshot, error) {
 	return readSensorSnapshotContents(path, now, false)
 }
 
-// readSensorSnapshotFixture is intentionally kept for parser tests that use
-// untrusted temporary fixtures instead of the production IPC path.
-func readSensorSnapshotFixture(path string, now time.Time) (HelperSnapshot, error) {
-	return readSensorSnapshotContents(path, now, true)
-}
-
+// readSensorSnapshotContents parses one snapshot. fixture skips the trusted
+// handle checks so parser tests can use temporary files.
 func readSensorSnapshotContents(path string, now time.Time, fixture bool) (HelperSnapshot, error) {
 	var snapshot HelperSnapshot
 	f, err := openSnapshotFileForRead(path, fixture)

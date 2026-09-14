@@ -11,17 +11,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$pawnPath = $null
+$pawn = $null
 if ($IncludePawnIO) {
     $fetchScript = Join-Path $PSScriptRoot 'fetch-pawnio.ps1'
+    # fetch-pawnio.ps1 outputs the verified object (Path, Sha256, SignerSubject).
     if ($PawnIOSetupPath) {
-        $pawnPath = (& $fetchScript -VerifyOnly -Path $PawnIOSetupPath | Select-Object -Last 1)
+        $pawn = (& $fetchScript -VerifyOnly -Path $PawnIOSetupPath | Select-Object -Last 1)
     }
     else {
-        $pawnPath = (& $fetchScript | Select-Object -Last 1)
+        $pawn = (& $fetchScript | Select-Object -Last 1)
     }
-    if (-not $pawnPath) { throw 'PawnIO fetch/verification failed' }
-    $pawnPath = [System.IO.Path]::GetFullPath([string]$pawnPath)
+    if (-not $pawn.Path) { throw 'PawnIO fetch/verification failed' }
 }
 if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
     $OutputPath = Join-Path $projectRoot $OutputPath
@@ -45,16 +45,15 @@ if ($IncludePawnIO) {
     $driversPath = Join-Path $OutputPath 'drivers'
     New-Item -ItemType Directory -Path $driversPath | Out-Null
     $publishedPawnPath = Join-Path $driversPath 'PawnIO_setup.exe'
-    Copy-Item -LiteralPath $pawnPath -Destination $publishedPawnPath
-    & $fetchScript -VerifyOnly -Path $publishedPawnPath | Out-Null
-    $hash = (Get-FileHash -LiteralPath $publishedPawnPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $signature = Get-AuthenticodeSignature -LiteralPath $publishedPawnPath
+    Copy-Item -LiteralPath $pawn.Path -Destination $publishedPawnPath
+    $published = (& $fetchScript -VerifyOnly -Path $publishedPawnPath | Select-Object -Last 1)
+    if (-not $published.Path) { throw 'Published PawnIO verification failed' }
     [pscustomobject]@{
         pawnio = [pscustomobject]@{
             version = '2.2.0'
             sourceUrl = 'https://github.com/namazso/PawnIO.Setup/releases/download/2.2.0/PawnIO_setup.exe'
-            sha256 = $hash
-            signerSubject = [string]$signature.SignerCertificate.Subject
+            sha256 = $published.Sha256
+            signerSubject = $published.SignerSubject
         }
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutputPath 'components.json') -Encoding UTF8
 }

@@ -6,20 +6,19 @@ package metric
 
 import (
 	"errors"
+	"fmt"
 	"os"
 )
 
-func openSnapshotFile(path string) (*os.File, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("sensor snapshot must be a regular non-reparse file")
+// The elevated helper and its protected ProgramData snapshot exist only on
+// Windows; elsewhere nothing can vouch for the file, so it is never trusted.
+func validateTrustedSnapshotPath(string) error {
+	return fmt.Errorf("sensor snapshot: %w", errors.ErrUnsupported)
+}
+
+func openSnapshotFileForRead(path string, fixture bool) (*os.File, error) {
+	if !fixture {
+		return nil, fmt.Errorf("sensor snapshot: %w", errors.ErrUnsupported)
 	}
 	return os.Open(path)
 }
-
-func validateTrustedSnapshotPath(string) error { return nil }
-
-func openSnapshotFileForRead(path string, _ bool) (*os.File, error) { return openSnapshotFile(path) }

@@ -9,6 +9,15 @@ param(
     [ValidateRange(10,7200)][int]$DurationSeconds = 1800
 )
 $ErrorActionPreference = 'Stop'
+# The ffmpeg child of $ParentId, only if it is our pinned binary started after the probe.
+function Find-Encoder([int]$ParentId) {
+    $child = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ParentId" | Where-Object { $_.Name -eq [IO.Path]::GetFileName($ffmpegPath) } | Select-Object -First 1
+    if (-not $child) { return $null }
+    $childPathMatches = [StringComparer]::OrdinalIgnoreCase.Equals($child.ExecutablePath, $ffmpegPath)
+    $childStartedAt = [Management.ManagementDateTimeConverter]::ToDateTime($child.CreationDate)
+    if (-not ($childPathMatches -and $childStartedAt -ge $probeStartedAt)) { return $null }
+    return Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
+}
 $probePath = (Resolve-Path -LiteralPath $Probe).Path
 $backgroundPath = (Resolve-Path -LiteralPath $Background).Path
 $ffmpegPath = (Resolve-Path -LiteralPath $FFmpeg).Path
@@ -23,7 +32,6 @@ $process = Start-Process -FilePath $probePath -ArgumentList $arguments -WindowSt
 $probeId = $process.Id
 # Keep the process handle-backed object from startup for reliable ExitCode access.
 $probeHandle = $process.Handle
-$encoderId = $null
 $encoderHandle = $null
 $encoderDiscovered = $false
 $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -38,17 +46,8 @@ while (-not $process.HasExited) {
         throw 'Probe exceeded duration plus 30-second cleanup allowance; processes stopped.'
     }
     if (-not $encoder) {
-        $child = Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.Name -eq [IO.Path]::GetFileName($ffmpegPath) } | Select-Object -First 1
-        if ($child) {
-            $childPathMatches = [StringComparer]::OrdinalIgnoreCase.Equals($child.ExecutablePath, $ffmpegPath)
-            $childStartedAt = [Management.ManagementDateTimeConverter]::ToDateTime($child.CreationDate)
-            if ($childPathMatches -and $childStartedAt -ge $probeStartedAt) {
-                $encoderId = $child.ProcessId
-                $encoder = Get-Process -Id $encoderId -ErrorAction SilentlyContinue
-                if ($encoder) { $encoderHandle = $encoder.Handle }
-                $encoderDiscovered = $null -ne $encoder
-            }
-        }
+        $encoder = Find-Encoder $process.Id
+        if ($encoder) { $encoderHandle = $encoder.Handle; $encoderDiscovered = $true }
     }
     $process.Refresh()
     if ($encoder) { $encoder.Refresh() }
@@ -99,18 +98,8 @@ $summary | ConvertTo-Json
     # Only terminate process IDs created or discovered by this run; never name-wide kill.
     if (-not $encoder) {
         try {
-            $child = Get-CimInstance Win32_Process -Filter "ParentProcessId = $probeId" |
-                Where-Object { $_.Name -eq [IO.Path]::GetFileName($ffmpegPath) } |
-                Select-Object -First 1
-            if ($child) {
-                $childPathMatches = [StringComparer]::OrdinalIgnoreCase.Equals($child.ExecutablePath, $ffmpegPath)
-                $childStartedAt = [Management.ManagementDateTimeConverter]::ToDateTime($child.CreationDate)
-                if ($childPathMatches -and $childStartedAt -ge $probeStartedAt) {
-                    $encoderId = $child.ProcessId
-                    $encoder = Get-Process -Id $encoderId -ErrorAction SilentlyContinue
-                    if ($encoder) { $encoderHandle = $encoder.Handle }
-                }
-            }
+            $encoder = Find-Encoder $probeId
+            if ($encoder) { $encoderHandle = $encoder.Handle }
         } catch { }
     }
     if ($encoder -and -not $encoder.HasExited) {

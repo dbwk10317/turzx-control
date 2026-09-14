@@ -55,8 +55,12 @@ func enableAutostart(configDir string) error {
 	if err != nil {
 		return fmt.Errorf("validate settings for autostart: %w", err)
 	}
-	if _, err := normalizedSettings(loaded); err != nil {
-		return fmt.Errorf("validate settings for autostart: %w", err)
+	// A fresh install has no settings.json; the daemon then runs on compiled
+	// defaults, so only a saved file needs to validate.
+	if loaded != (settings{}) {
+		if _, err := normalizedSettings(loaded); err != nil {
+			return fmt.Errorf("validate settings for autostart: %w", err)
+		}
 	}
 	executable, err := os.Executable()
 	if err != nil {

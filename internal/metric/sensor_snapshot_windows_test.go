@@ -13,6 +13,7 @@ import (
 func TestValidateSnapshotDescriptorACL(t *testing.T) {
 	for name, sddl := range map[string]string{
 		"protected administrators and system": `O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;BU)`,
+		"deny ace tightens only":              `O:BAD:P(D;;FW;;;WD)(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;BU)`,
 		"untrusted delete child":              `O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;DC;;;BU)`,
 		"nil dacl":                            `O:BA`,
 		"untrusted owner":                     `O:BU D:P(A;;FA;;;BA)(A;;FA;;;SY)`,
@@ -23,7 +24,7 @@ func TestValidateSnapshotDescriptorACL(t *testing.T) {
 				t.Fatal(err)
 			}
 			err = validateSnapshotDescriptor(sd, true)
-			if name == "protected administrators and system" {
+			if name == "protected administrators and system" || name == "deny ace tightens only" {
 				if err != nil {
 					t.Fatalf("valid descriptor rejected: %v", err)
 				}

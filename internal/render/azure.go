@@ -19,11 +19,10 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// AzurePreviewOverlay renders the design validation sample overlay for the
-// azure-ribbon background. Values are deliberately preview data, independent
-// of the metric package and live usage sources. It embeds Pretendard v1.3.9
-// from https://github.com/orioncactus/pretendard under the SIL OFL 1.1 in
-// fonts/OFL.txt so the preview has no system-font dependency.
+// AzureOverlay renders the latest dashboard snapshot on the azure-ribbon
+// background. Text uses the embedded Pretendard v1.3.9 fonts from
+// https://github.com/orioncactus/pretendard (SIL OFL 1.1, fonts/OFL.txt), so
+// rendering has no system-font dependency.
 func AzureOverlay(snapshot func() Dashboard) Overlay {
 	return func(elapsed time.Duration, counter uint64) ([]byte, error) {
 		if snapshot == nil {
@@ -84,6 +83,8 @@ func previewDashboard(at time.Time) Dashboard {
 		Hardware: HardwareDashboard{CPU: Metric{Label: "CPU", Usage: "34%", Temperature: "52°C", Fraction: .34}, GPU: Metric{Label: "GPU", Usage: "67%", Temperature: "61°C", Fraction: .67}, RAM: Metric{Label: "RAM", Usage: "58%", Temperature: "48°C", Fraction: .58}}}
 }
 
+// AzurePreviewOverlay renders fixed preview data for design checks; it is
+// independent of the metric package and live usage sources.
 func AzurePreviewOverlay(elapsed time.Duration, counter uint64) ([]byte, error) {
 	return azureDashboardOverlay(previewDashboard(time.Date(2026, 9, 11, 8, 42, 36, 0, time.Local).Add(elapsed)), elapsed, counter, true)
 }
@@ -103,8 +104,15 @@ var (
 
 func text(img draw.Image, bold bool, x, y int, value string, size float64, c color.Color) {
 	azureFontOnce.Do(func() {
-		azureRegular, _ = opentype.Parse(pretendardRegular)
-		azureBold, _ = opentype.Parse(pretendardSemiBold)
+		// The fonts are compile-time embeds; failing to parse them is a build
+		// defect, not a runtime condition to render around.
+		var err error
+		if azureRegular, err = opentype.Parse(pretendardRegular); err != nil {
+			panic(fmt.Sprintf("embedded Pretendard-Regular: %v", err))
+		}
+		if azureBold, err = opentype.Parse(pretendardSemiBold); err != nil {
+			panic(fmt.Sprintf("embedded Pretendard-SemiBold: %v", err))
+		}
 	})
 	key := fmt.Sprintf("%t/%.1f", bold, size)
 	azureFacesMu.Lock()
@@ -114,13 +122,13 @@ func text(img draw.Image, bold bool, x, y int, value string, size float64, c col
 		if bold {
 			parsed = azureBold
 		}
-		face, _ = opentype.NewFace(parsed, &opentype.FaceOptions{Size: size, DPI: 72, Hinting: font.HintingFull})
+		var err error
+		if face, err = opentype.NewFace(parsed, &opentype.FaceOptions{Size: size, DPI: 72, Hinting: font.HintingFull}); err != nil {
+			panic(fmt.Sprintf("Pretendard face %s: %v", key, err))
+		}
 		azureFaces[key] = face
 	}
 	defer azureFacesMu.Unlock()
-	if face == nil {
-		return
-	}
 	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face, Dot: fixed.P(x, y)}
 	d.DrawString(value)
 }

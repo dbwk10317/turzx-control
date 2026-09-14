@@ -23,18 +23,17 @@ func TestDisplayFlagsOverrideAndDisable(t *testing.T) {
 	if err := flags.Parse([]string{"-brightness=50", "-theme=azure-ribbon", "-chunk-wait=1500ms"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := read()
-	if err != nil || got == nil || got.Brightness != 50 || got.Theme != "azure-ribbon" || got.ChunkWait != "1500ms" {
-		t.Fatalf("display override = %#v, err=%v", got, err)
+	got := read()
+	if got == nil || got.Brightness != 50 || got.Theme != "azure-ribbon" || got.ChunkWait != "1500ms" {
+		t.Fatalf("display override = %#v", got)
 	}
 	flags = flag.NewFlagSet("test", flag.ContinueOnError)
 	read = displayFlags(flags, got)
 	if err := flags.Parse([]string{"-background="}); err != nil {
 		t.Fatal(err)
 	}
-	got, err = read()
-	if err != nil || got != nil {
-		t.Fatalf("display disable = %#v, err=%v", got, err)
+	if got = read(); got != nil {
+		t.Fatalf("display disable = %#v", got)
 	}
 }
 

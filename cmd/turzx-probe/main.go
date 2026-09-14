@@ -43,8 +43,7 @@ func run(args []string) error {
 	liveDataFlag := flags.Bool("live-data", false, "use live Codex, Claude, and hardware snapshots for the theme overlay")
 	codexBin := flags.String("codex-bin", "codex", "path to the Codex CLI executable")
 	codexHome := flags.String("codex-home", "", "dedicated absolute CODEX_HOME for live data")
-	bucket := flags.String("bucket", "codex", "exact Codex rate-limit bucket ID")
-	claudeInboxFile := flags.String("claude-inbox-file", "", "exact Claude statusline inbox envelope file")
+	claudeInboxDir := flags.String("claude-inbox-dir", "", "dedicated Claude statusline inbox directory")
 	claudeBinding := flags.String("claude-binding", "", "expected Claude statusline binding ID")
 	sensorHelper := flags.String("sensor-helper", "", "path to local LHM sensor helper executable")
 	cpuTemperatureSensor := flags.String("cpu-temperature-sensor", "", "helper sensor ID for CPU temperature")
@@ -84,14 +83,14 @@ func run(args []string) error {
 	if *duration <= 0 || *chunkWait <= 0 || ((*renderOnly != "" || *theme != "") && *background == "") {
 		return fmt.Errorf("require positive duration/chunk-wait and -background for -render-only or -theme")
 	}
-	if *theme != "" && *theme != "azure-ribbon" && *theme != "smon-halloween" {
+	if _, ok := themes[*theme]; *theme != "" && !ok {
 		return fmt.Errorf("unknown theme %q", *theme)
 	}
 	var liveCfg *liveDataConfig
 	if *liveDataFlag {
 		liveCfg = &liveDataConfig{
-			CodexBin: *codexBin, CodexHome: *codexHome, CodexBucket: *bucket,
-			ClaudeInboxFile: *claudeInboxFile, ClaudeBinding: *claudeBinding,
+			CodexBin: *codexBin, CodexHome: *codexHome,
+			ClaudeInboxDir: *claudeInboxDir, ClaudeBinding: *claudeBinding,
 			SensorHelper: *sensorHelper,
 			Selection: metric.HardwareSensorSelection{
 				CPUTemperatureSensor: *cpuTemperatureSensor, GPUUsageSensor: *gpuUsageSensor,

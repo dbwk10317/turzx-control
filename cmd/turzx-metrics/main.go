@@ -93,18 +93,12 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		}
 
 		snapshot := hardware.Sample(ctx)
+		var helperSnapshot metric.HelperSnapshot
+		var helperErr error
 		if sensorProcess != nil {
-			hardwareSnapshot, helperErr := sensorProcess.Sample(ctx)
-			mapped := selection.Readings(hardwareSnapshot, helperErr, time.Now())
-			for _, reading := range mapped {
-				for i := range snapshot.Readings {
-					if snapshot.Readings[i].ID != reading.ID {
-						continue
-					}
-					snapshot.Readings[i] = reading
-				}
-			}
+			helperSnapshot, helperErr = sensorProcess.Sample(ctx)
 		}
+		snapshot.Readings = append(snapshot.Readings, selection.Readings(helperSnapshot, helperErr, time.Now())...)
 		if err := encoder.Encode(snapshot); err != nil {
 			return err
 		}

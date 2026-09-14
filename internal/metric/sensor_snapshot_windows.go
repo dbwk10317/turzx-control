@@ -70,12 +70,13 @@ func validateTrustedSnapshotPath(path string) error {
 	if err != nil || !strings.EqualFold(filepath.Clean(clean), filepath.Clean(expected)) {
 		return errors.New("sensor snapshot path is outside the trusted ProgramData location")
 	}
+	// The file itself is checked on its open handle in openSnapshotFile.
 	for _, item := range []string{filepath.Join(programData, "TURZXControl"), filepath.Join(programData, "TURZXControl", "Sensors"), root} {
 		if err := validateSnapshotACL(item, true); err != nil {
 			return fmt.Errorf("unsafe sensor snapshot directory: %w", err)
 		}
 	}
-	return validateSnapshotACL(expected, false)
+	return nil
 }
 
 func validateSnapshotACL(path string, protected bool) error {
@@ -142,6 +143,11 @@ func validateSnapshotDescriptor(sd *windows.SECURITY_DESCRIPTOR, protected bool)
 				return err
 			}
 			return errors.New("invalid ACE")
+		}
+		// A deny ACE only removes access, so an administrator hardening the
+		// directory further must not break the reader.
+		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
+			continue
 		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
 			return errors.New("unsupported ACE type")

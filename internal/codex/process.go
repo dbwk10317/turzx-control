@@ -11,78 +11,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	maxStdoutLine      = 2 << 20
-	maxStderrTail      = 4 << 10
-	startupTimeout     = 10 * time.Second
-	loginVerifyTimeout = 10 * time.Second
+	maxStdoutLine  = 2 << 20
+	maxStderrTail  = 4 << 10
+	startupTimeout = 10 * time.Second
 )
 
 var (
-	errInvalidStart     = errors.New("invalid Codex app-server configuration")
-	errProcessStopped   = errors.New("Codex app-server stopped")
-	errInvalidResponse  = errors.New("invalid Codex app-server response")
-	errAccountIdentity  = errors.New("Codex account identity unavailable")
-	errAccountChanged   = errors.New("Codex account changed during usage read")
-	errRateLimitMissing = errors.New("Codex rate limits unavailable")
-	errLoginFailed      = errors.New("Codex login failed")
+	errInvalidStart    = errors.New("invalid Codex app-server configuration")
+	errProcessStopped  = errors.New("Codex app-server stopped")
+	errInvalidResponse = errors.New("invalid Codex app-server response")
 )
-
-// IsAccountChanged reports that the dedicated profile no longer matches the
-// account identity captured when the App Server process started.
-func IsAccountChanged(err error) bool { return errors.Is(err, errAccountChanged) }
-
-// IsAuthRequired reports that the dedicated profile has no usable account
-// identity and must be authenticated again.
-func IsAuthRequired(err error) bool { return errors.Is(err, errAccountIdentity) }
-
-// LoginSession owns a short-lived App Server process while the user completes
-// the official ChatGPT browser login flow.
-type LoginSession struct {
-	process *Process
-	loginID string
-	authURL string
-}
-
-// WindowKind identifies the two windows understood by the first theme.
-type WindowKind string
-
-const (
-	FiveHour WindowKind = "five_hour"
-	Weekly   WindowKind = "weekly"
-	Other    WindowKind = "other"
-)
-
-// Window is one usage limit window. UsedPercent is retained as returned by
-// Codex; RemainingPercent is clamped to the displayable range.
-type Window struct {
-	Kind               WindowKind `json:"kind"`
-	WindowDurationMins int        `json:"window_duration_mins"`
-	UsedPercent        int        `json:"used_percent"`
-	RemainingPercent   int        `json:"remaining_percent"`
-	ResetsAt           time.Time  `json:"resets_at"`
-}
-
-// Snapshot is a validated, account-independent usage observation.
-// Account email and account ID are intentionally not represented here.
-type Snapshot struct {
-	Plan       string    `json:"plan"`
-	FiveHour   *Window   `json:"five_hour"`
-	Weekly     *Window   `json:"weekly"`
-	Other      []Window  `json:"other,omitempty"`
-	ReceivedAt time.Time `json:"received_at"`
-}
 
 type wireMessage struct {
 	ID     json.RawMessage `json:"id"`
@@ -100,31 +47,26 @@ type response struct {
 }
 
 // Process owns one Codex app-server child and serializes its requests.
+// The stdout and stderr pipes are owned here rather than by os/exec so that
+// cmd.Wait can never close them underneath the reader goroutines.
 type Process struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	cancel context.CancelFunc
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	stdout, stderr *os.File
+	cancel         context.CancelFunc
 
 	messages  chan wireMessage
 	updates   chan struct{}
 	logins    chan loginCompletion
 	requestMu sync.Mutex
+	nextID    uint64 // protected by requestMu
 	closeOnce sync.Once
 	closeDone chan struct{}
 	waitDone  chan struct{}
 	workers   sync.WaitGroup
+	stderrLog tailBuffer
 
-	stateMu  sync.Mutex
-	readErr  error
-	nextID   uint64
-	stderr   tailBuffer
-	expected account
-}
-
-type loginCompletion struct {
-	loginID string
-	success bool
-	err     error
+	expected account // set once by Start before any concurrent use
 }
 
 // Start starts executable with --stdio and an explicit, absolute CODEX_HOME.
@@ -146,112 +88,7 @@ func Start(ctx context.Context, executable, home string) (*Process, error) {
 	return p, nil
 }
 
-// StartChatGPTLogin begins the official browser login flow for an explicit
-// CODEX_HOME. Credentials remain owned by Codex App Server.
-func StartChatGPTLogin(ctx context.Context, executable, home string) (*LoginSession, error) {
-	p, err := startProcess(ctx, executable, home)
-	if err != nil {
-		return nil, err
-	}
-	loginCtx, cancel := context.WithTimeout(ctx, startupTimeout)
-	defer cancel()
-	result, err := p.request(loginCtx, "account/login/start", map[string]any{
-		"type":                      "chatgpt",
-		"useHostedLoginSuccessPage": true,
-		"appBrand":                  "chatgpt",
-	})
-	if err != nil {
-		p.Close()
-		return nil, err
-	}
-	var login struct {
-		Type    string `json:"type"`
-		LoginID string `json:"loginId"`
-		AuthURL string `json:"authUrl"`
-	}
-	if json.Unmarshal(result.result, &login) != nil || login.Type != "chatgpt" || strings.TrimSpace(login.LoginID) == "" {
-		p.Close()
-		return nil, fmt.Errorf("%w: malformed login response", errInvalidResponse)
-	}
-	if !validAuthURL(login.AuthURL) {
-		p.Close()
-		host := ""
-		if parsed, err := url.Parse(login.AuthURL); err == nil {
-			host = parsed.Hostname()
-		}
-		return nil, fmt.Errorf("%w: unsupported login URL host %q", errInvalidResponse, host)
-	}
-	return &LoginSession{process: p, loginID: login.LoginID, authURL: login.AuthURL}, nil
-}
-
-// Logout signs out the account in the explicit dedicated CODEX_HOME profile.
-// Credentials are managed by Codex App Server; this method never reads them.
-func Logout(ctx context.Context, executable, home string) error {
-	p, err := startProcess(ctx, executable, home)
-	if err != nil {
-		return err
-	}
-	defer p.Close()
-
-	logoutResult, err := p.requestAllowError(ctx, "account/logout", map[string]any{})
-	if err != nil {
-		return fmt.Errorf("Codex logout: %w", err)
-	}
-	result, err := p.requestAllowError(ctx, "account/read", map[string]any{"refreshToken": false})
-	if err != nil {
-		return fmt.Errorf("Codex logout verification: %w", err)
-	}
-	if loggedOut(result) {
-		return nil
-	}
-	if len(logoutResult.wireError) != 0 {
-		return fmt.Errorf("Codex logout: %w", errInvalidResponse)
-	}
-	return errAccountIdentity
-}
-
-// AuthURL is the official URL the user should open to continue login.
-func (s *LoginSession) AuthURL() string { return s.authURL }
-
-// Wait waits for the matching completion notification and verifies that the
-// resulting profile exposes a stable ChatGPT account identity.
-func (s *LoginSession) Wait(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-s.process.closeDone:
-			return errProcessStopped
-		case <-s.process.waitDone:
-			return errProcessStopped
-		case completed := <-s.process.logins:
-			if completed.err != nil {
-				return completed.err
-			}
-			if completed.loginID != s.loginID {
-				continue
-			}
-			if !completed.success {
-				return errLoginFailed
-			}
-			verifyCtx, cancel := context.WithTimeout(ctx, loginVerifyTimeout)
-			_, err := s.process.readAccount(verifyCtx)
-			cancel()
-			return err
-		}
-	}
-}
-
-// Close stops the login App Server process.
-func (s *LoginSession) Close() { s.process.Close() }
-
 func startProcess(ctx context.Context, executable, home string) (*Process, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if strings.TrimSpace(executable) == "" || strings.TrimSpace(home) == "" || !filepath.IsAbs(home) {
 		return nil, errInvalidStart
 	}
@@ -259,31 +96,42 @@ func startProcess(ctx context.Context, executable, home string) (*Process, error
 
 	processCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(processCtx, executable, "app-server", "--stdio")
-	cmd.Env = replaceCodeHome(os.Environ(), absoluteHome)
+	cmd.Env = replaceCodexHome(os.Environ(), absoluteHome)
 	configureCommand(cmd)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
 		cancel()
 		return nil, err
 	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		cancel()
+		return nil, err
+	}
+	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
+	if err := cmd.Start(); err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		stderrR.Close()
+		stderrW.Close()
+		cancel()
+		return nil, err
+	}
+	stdoutW.Close()
+	stderrW.Close()
 
 	p := &Process{
 		cmd:       cmd,
 		stdin:     stdin,
+		stdout:    stdoutR,
+		stderr:    stderrR,
 		cancel:    cancel,
 		messages:  make(chan wireMessage, 16),
 		updates:   make(chan struct{}, 1),
@@ -292,17 +140,9 @@ func startProcess(ctx context.Context, executable, home string) (*Process, error
 		waitDone:  make(chan struct{}),
 	}
 	p.workers.Add(2)
-	go p.readStdout(stdout)
-	go p.readStderr(stderr)
-	go func() {
-		err := cmd.Wait()
-		p.stateMu.Lock()
-		if err != nil && p.readErr == nil {
-			p.readErr = errProcessStopped
-		}
-		p.stateMu.Unlock()
-		close(p.waitDone)
-	}()
+	go p.readStdout()
+	go p.readStderr()
+	go func() { _ = cmd.Wait(); close(p.waitDone) }()
 
 	startupCtx, startupCancel := context.WithTimeout(ctx, startupTimeout)
 	defer startupCancel()
@@ -316,7 +156,7 @@ func startProcess(ctx context.Context, executable, home string) (*Process, error
 		p.Close()
 		return nil, err
 	}
-	if err := p.notify(startupCtx, "initialized"); err != nil {
+	if err := p.notify("initialized"); err != nil {
 		p.Close()
 		return nil, err
 	}
@@ -326,43 +166,6 @@ func startProcess(ctx context.Context, executable, home string) (*Process, error
 // Updates is signaled when the app-server reports a usage or account update.
 func (p *Process) Updates() <-chan struct{} { return p.updates }
 
-// Read obtains and validates one bucket's current rate limits.
-func (p *Process) Read(ctx context.Context, bucket string) (Snapshot, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if strings.TrimSpace(bucket) == "" {
-		return Snapshot{}, errRateLimitMissing
-	}
-
-	before, err := p.readAccount(ctx)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if !before.sameIdentity(p.expected) {
-		return Snapshot{}, errAccountChanged
-	}
-	rate, err := p.request(ctx, "account/rateLimits/read", map[string]any{
-		"excludeResetCreditDetails": true,
-	})
-	if err != nil {
-		return Snapshot{}, err
-	}
-	after, err := p.readAccount(ctx)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if !after.sameIdentity(p.expected) || !before.sameIdentity(after) {
-		return Snapshot{}, errAccountChanged
-	}
-
-	snapshot, err := parseRateLimits(rate.result, bucket, after.plan, rate.receivedAt)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	return snapshot, nil
-}
-
 // Close terminates the child and waits for all I/O goroutines to finish.
 func (p *Process) Close() {
 	p.closeOnce.Do(func() {
@@ -370,16 +173,22 @@ func (p *Process) Close() {
 		_ = p.stdin.Close()
 		close(p.closeDone)
 		<-p.waitDone
-		// CommandContext kills the child when cancellation is observed. Join the
-		// readers before closing Updates so they cannot signal a closed channel.
+		// The child is gone; closing our pipe ends releases readers even if a
+		// grandchild inherited the write ends. Join them before closing Updates
+		// so they cannot signal a closed channel.
+		_ = p.stdout.Close()
+		_ = p.stderr.Close()
 		p.workers.Wait()
 		close(p.updates)
-		p.stateMu.Lock()
-		if p.readErr == nil {
-			p.readErr = errProcessStopped
-		}
-		p.stateMu.Unlock()
 	})
+}
+
+// stopped describes an exited child, with its stderr tail when there is one.
+func (p *Process) stopped() error {
+	if tail := strings.TrimSpace(p.stderrLog.String()); tail != "" {
+		return fmt.Errorf("%w: %s", errProcessStopped, tail)
+	}
+	return errProcessStopped
 }
 
 func (p *Process) request(ctx context.Context, method string, params any) (response, error) {
@@ -390,26 +199,22 @@ func (p *Process) requestAllowError(ctx context.Context, method string, params a
 	return p.requestWithPolicy(ctx, method, params, true)
 }
 
+// requestWithPolicy sends one request and waits for its reply. A ctx deadline
+// abandons only this request: the child keeps running and a late reply is
+// discarded by the id check on the next request.
 func (p *Process) requestWithPolicy(ctx context.Context, method string, params any, allowError bool) (response, error) {
 	p.requestMu.Lock()
 	defer p.requestMu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	p.stateMu.Lock()
 	p.nextID++
 	id := p.nextID
-	p.stateMu.Unlock()
 
 	payload, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil {
 		return response{}, err
 	}
 	payload = append(payload, '\n')
-	stopCancel := context.AfterFunc(ctx, p.cancel)
-	defer stopCancel()
 	if _, err := p.stdin.Write(payload); err != nil {
-		return response{}, errProcessStopped
+		return response{}, p.stopped()
 	}
 	for {
 		select {
@@ -419,23 +224,16 @@ func (p *Process) requestWithPolicy(ctx context.Context, method string, params a
 			return response{}, errProcessStopped
 		case msg, ok := <-p.messages:
 			if !ok {
-				return response{}, errProcessStopped
+				return response{}, p.stopped()
 			}
 			if msg.Err != nil {
 				return response{}, msg.Err
 			}
-			if msg.Method != "" && !hasID(msg.ID) {
-				p.handleNotification(msg.Method, msg.Params)
-				continue
-			}
-			if !hasID(msg.ID) || !sameID(msg.ID, id) {
+			if !sameID(msg.ID, id) {
 				continue
 			}
 			if len(msg.Error) != 0 && string(msg.Error) != "null" {
 				if allowError {
-					if !stopCancel() || ctx.Err() != nil {
-						return response{}, ctx.Err()
-					}
 					return response{wireError: msg.Error, receivedAt: time.Now()}, nil
 				}
 				return response{}, errInvalidResponse
@@ -443,29 +241,20 @@ func (p *Process) requestWithPolicy(ctx context.Context, method string, params a
 			if len(msg.Result) == 0 || string(msg.Result) == "null" {
 				return response{}, errInvalidResponse
 			}
-			if !stopCancel() || ctx.Err() != nil {
-				return response{}, ctx.Err()
-			}
 			return response{result: msg.Result, receivedAt: time.Now()}, nil
 		}
 	}
 }
 
-func (p *Process) notify(ctx context.Context, method string) error {
+func (p *Process) notify(method string) error {
 	p.requestMu.Lock()
 	defer p.requestMu.Unlock()
 	payload, err := json.Marshal(map[string]any{"method": method, "params": map[string]any{}})
 	if err != nil {
 		return err
 	}
-	payload = append(payload, '\n')
-	stopCancel := context.AfterFunc(ctx, p.cancel)
-	defer stopCancel()
-	if _, err := p.stdin.Write(payload); err != nil {
-		return errProcessStopped
-	}
-	if !stopCancel() || ctx.Err() != nil {
-		return ctx.Err()
+	if _, err := p.stdin.Write(append(payload, '\n')); err != nil {
+		return p.stopped()
 	}
 	return nil
 }
@@ -497,10 +286,12 @@ func (p *Process) handleNotification(method string, params json.RawMessage) {
 	}
 }
 
-func (p *Process) readStdout(stdout io.Reader) {
+// readStdout routes notifications directly and queues replies for the
+// request in flight. Notifications never enter the reply queue.
+func (p *Process) readStdout() {
 	defer p.workers.Done()
 	defer close(p.messages)
-	r := bufio.NewReader(stdout)
+	r := bufio.NewReader(p.stdout)
 	for {
 		line, err := readLineLimit(r, maxStdoutLine)
 		if len(line) != 0 {
@@ -511,18 +302,12 @@ func (p *Process) readStdout(stdout io.Reader) {
 			}
 			if msg.Method != "" && !hasID(msg.ID) {
 				p.handleNotification(msg.Method, msg.Params)
-				if err != nil {
-					return
-				}
-				continue
+			} else {
+				p.sendMessage(msg)
 			}
-			p.sendMessage(msg)
 		}
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				p.stateMu.Lock()
-				p.readErr = errInvalidResponse
-				p.stateMu.Unlock()
+			if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
 				p.sendMessage(wireMessage{Err: errInvalidResponse})
 			}
 			return
@@ -530,27 +315,9 @@ func (p *Process) readStdout(stdout io.Reader) {
 	}
 }
 
-func validAuthURL(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" && u.Port() != "443" {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	return host == "chatgpt.com" || host == "auth.openai.com"
-}
-
-func (p *Process) readStderr(stderr io.Reader) {
+func (p *Process) readStderr() {
 	defer p.workers.Done()
-	buf := make([]byte, 1024)
-	for {
-		n, err := stderr.Read(buf)
-		if n > 0 {
-			p.stderr.Write(buf[:n])
-		}
-		if err != nil {
-			return
-		}
-	}
+	_, _ = io.Copy(&p.stderrLog, p.stderr)
 }
 
 func (p *Process) sendMessage(msg wireMessage) {
@@ -587,7 +354,7 @@ func sameID(raw json.RawMessage, id uint64) bool {
 	return n == id
 }
 
-func replaceCodeHome(env []string, home string) []string {
+func replaceCodexHome(env []string, home string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, value := range env {
 		if key, _, found := strings.Cut(value, "="); found && strings.EqualFold(key, "CODEX_HOME") {
@@ -598,18 +365,20 @@ func replaceCodeHome(env []string, home string) []string {
 	return append(out, "CODEX_HOME="+home)
 }
 
+// tailBuffer keeps the last maxStderrTail bytes written.
 type tailBuffer struct {
 	mu sync.Mutex
 	b  []byte
 }
 
-func (t *tailBuffer) Write(b []byte) {
+func (t *tailBuffer) Write(b []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.b = append(t.b, b...)
 	if len(t.b) > maxStderrTail {
 		t.b = append([]byte(nil), t.b[len(t.b)-maxStderrTail:]...)
 	}
+	return len(b), nil
 }
 
 func (t *tailBuffer) String() string {
@@ -618,193 +387,9 @@ func (t *tailBuffer) String() string {
 	return string(t.b)
 }
 
-type account struct {
-	typ   string
-	email string
-	plan  string
-}
-
-func (a account) sameIdentity(other account) bool {
-	return a.typ == other.typ && a.email == other.email
-}
-
-func (p *Process) readAccount(ctx context.Context) (account, error) {
-	result, err := p.request(ctx, "account/read", map[string]any{"refreshToken": false})
-	if err != nil {
-		return account{}, err
-	}
-	return parseAccount(result.result)
-}
-
-func loggedOut(result response) bool {
-	if len(result.wireError) != 0 {
-		var value struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(result.wireError, &value) != nil {
-			return false
-		}
-		code := strings.ToLower(strings.TrimSpace(value.Code))
-		message := strings.ToLower(strings.TrimSpace(value.Message))
-		return code == "not_authenticated" || code == "unauthenticated" || strings.Contains(message, "not logged in") || strings.Contains(message, "not authenticated")
-	}
-	var root map[string]json.RawMessage
-	if json.Unmarshal(result.result, &root) != nil {
-		return false
-	}
-	accountRaw, ok := root["account"]
-	return ok && string(accountRaw) == "null"
-}
-
-func parseAccount(raw json.RawMessage) (account, error) {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &root); err != nil {
-		return account{}, errAccountIdentity
-	}
-	accountRaw := raw
-	if nested, ok := root["account"]; ok {
-		accountRaw = nested
-	}
-	if string(accountRaw) == "null" {
-		return account{}, errAccountIdentity
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(accountRaw, &fields); err != nil {
-		return account{}, errAccountIdentity
-	}
-	var typ, email string
-	if !readString(fields["type"], &typ) || typ != "chatgpt" || !readString(fields["email"], &email) || strings.TrimSpace(email) == "" {
-		return account{}, errAccountIdentity
-	}
-	var plan string
-	if !readString(fields["planType"], &plan) {
-		_ = readString(fields["plan"], &plan)
-	}
-	return account{typ: typ, email: email, plan: plan}, nil
-}
-
 func readString(raw json.RawMessage, dst *string) bool {
 	if len(raw) == 0 || string(raw) == "null" {
 		return false
 	}
 	return json.Unmarshal(raw, dst) == nil
-}
-
-func parseRateLimits(raw json.RawMessage, bucket, plan string, receivedAt time.Time) (Snapshot, error) {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &root); err != nil {
-		return Snapshot{}, errInvalidResponse
-	}
-	selected, ok := root["rateLimits"]
-	byID, hasByID := root["rateLimitsByLimitId"]
-	if hasByID && string(byID) != "null" {
-		var limits map[string]json.RawMessage
-		if json.Unmarshal(byID, &limits) != nil {
-			return Snapshot{}, errRateLimitMissing
-		}
-		selected, ok = limits[bucket]
-		if !ok {
-			return Snapshot{}, errRateLimitMissing
-		}
-	} else if ok {
-		var single map[string]json.RawMessage
-		if json.Unmarshal(selected, &single) != nil {
-			return Snapshot{}, errRateLimitMissing
-		}
-		if rawID, exists := single["limitId"]; exists && string(rawID) != "null" {
-			var limitID string
-			if !readString(rawID, &limitID) || limitID != bucket {
-				return Snapshot{}, errRateLimitMissing
-			}
-		}
-	}
-	if !ok || string(selected) == "null" {
-		return Snapshot{}, errRateLimitMissing
-	}
-	windows, err := parseWindows(selected)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	snapshot := Snapshot{Plan: plan, ReceivedAt: receivedAt}
-	for _, window := range windows {
-		w := window
-		switch w.Kind {
-		case FiveHour:
-			snapshot.FiveHour = &w
-		case Weekly:
-			snapshot.Weekly = &w
-		default:
-			snapshot.Other = append(snapshot.Other, w)
-		}
-	}
-	return snapshot, nil
-}
-
-func parseWindows(raw json.RawMessage) ([]Window, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, errInvalidResponse
-	}
-	seen := make(map[int]struct{}, 2)
-	windows := make([]Window, 0, 2)
-	for _, name := range []string{"primary", "secondary"} {
-		value, exists := fields[name]
-		if !exists || string(value) == "null" {
-			continue
-		}
-		var item map[string]json.RawMessage
-		if json.Unmarshal(value, &item) != nil {
-			return nil, errInvalidResponse
-		}
-		mins, ok := integer(item["windowDurationMins"])
-		if !ok || mins <= 0 || mins > math.MaxInt {
-			return nil, errInvalidResponse
-		}
-		duration := int(mins)
-		if _, exists := seen[duration]; exists {
-			return nil, errInvalidResponse
-		}
-		seen[duration] = struct{}{}
-		used, ok := integer(item["usedPercent"])
-		if !ok || used < 0 || used > math.MaxInt {
-			return nil, errInvalidResponse
-		}
-		reset, ok := integer(item["resetsAt"])
-		if !ok || len(item["resetsAt"]) == 0 || string(item["resetsAt"]) == "null" {
-			return nil, errInvalidResponse
-		}
-		remaining := int64(100) - used
-		if remaining < 0 {
-			remaining = 0
-		}
-		window := Window{
-			WindowDurationMins: duration,
-			UsedPercent:        int(used),
-			RemainingPercent:   int(remaining),
-			ResetsAt:           time.Unix(reset, 0).UTC(),
-		}
-		switch duration {
-		case 300:
-			window.Kind = FiveHour
-		case 10080:
-			window.Kind = Weekly
-		default:
-			window.Kind = Other
-		}
-		windows = append(windows, window)
-	}
-	return windows, nil
-}
-
-func integer(raw json.RawMessage) (int64, bool) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return 0, false
-	}
-	var n json.Number
-	if err := json.Unmarshal(raw, &n); err != nil {
-		return 0, false
-	}
-	i, err := strconv.ParseInt(string(n), 10, 64)
-	return i, err == nil
 }

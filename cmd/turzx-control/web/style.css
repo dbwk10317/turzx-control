@@ -62,14 +62,12 @@ h2 { margin: 0; font-size: 28px; letter-spacing: -.025em; }
 
 .provider-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; background: #fff; }
-.muted-card { background: var(--soft); }
 .card-head { display: flex; justify-content: space-between; align-items: center; }
 .provider-icon { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); }
 .provider-icon svg { width: 23px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .codex-icon { color: var(--primary); border-color: #dcd8ff; background: #f7f6ff; }
 .status { display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 4px 10px; border-radius: 999px; background: #fff3e2; color: #8a5310; font-size: 12px; font-weight: 700; }
 .status span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.status.neutral { background: #e9ebef; color: #626877; }
 .status[data-status="starting"], .status[data-status="waiting"] { background: #eeecff; color: #5546d9; }
 .status[data-status="disconnecting"] { background: #eeecff; color: #5546d9; }
 .status[data-status="connected"] { background: #e5f6ef; color: var(--success); }
@@ -89,14 +87,11 @@ h2 { margin: 0; font-size: 28px; letter-spacing: -.025em; }
 .hidden { display: none; }
 .feedback { min-height: 24px; margin: 12px 2px 0; color: var(--muted); font-size: 13px; }
 
-.sensor-list { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.sensor-list { margin: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .sensor-row { min-height: 64px; padding: 14px 20px; display: grid; grid-template-columns: 130px 1fr auto; gap: 20px; align-items: center; border-bottom: 1px solid var(--line); }
 .sensor-row:last-child { border-bottom: 0; }
-.sensor-row > span:first-child { color: var(--muted); font-size: 13px; }
-.sensor-row strong { font-size: 14px; font-weight: 650; }
-.check { display: inline-flex; align-items: center; gap: 5px; color: var(--success); font-size: 12px; font-weight: 700; }
-.check svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.unsupported { padding: 3px 8px; border-radius: 6px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 700; }
+.sensor-row dt { color: var(--muted); font-size: 13px; }
+.sensor-row dd { margin: 0; font-size: 14px; font-weight: 650; }
 
 footer { min-height: 84px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; }
 
@@ -110,7 +105,7 @@ footer { min-height: 84px; border-top: 1px solid var(--line); display: flex; jus
   .section-heading > p { justify-self: start; }
   .provider-grid { grid-template-columns: 1fr; }
   .sensor-row { grid-template-columns: 1fr auto; gap: 4px 12px; padding-block: 16px; }
-  .sensor-row strong { grid-column: 1; }
+  .sensor-row dd { grid-column: 1; }
   .sensor-row > :last-child { grid-column: 2; grid-row: 1 / span 2; }
   footer { padding: 20px 0; align-items: flex-start; flex-direction: column; gap: 6px; }
 }

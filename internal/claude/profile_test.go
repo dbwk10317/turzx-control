@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 
 func fakeClaude() {
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
-	if dir == "" || strings.EqualFold(os.Getenv("CLAUDE_CONFIG_DIR_OLD"), dir) {
+	if dir == "" {
 		os.Exit(20)
 	}
 	marker := filepath.Join(dir, ".fake-auth")

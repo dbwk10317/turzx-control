@@ -3,13 +3,12 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,82 +27,29 @@ type displaySettings struct {
 	Selection      metric.HardwareSensorSelection `json:"selection"`
 }
 
-type displaySelectionJSON struct {
-	CPUTemperatureSensor         string `json:"cpu-temperature-sensor"`
-	GPUUsageSensor               string `json:"gpu-usage-sensor"`
-	GPUTemperatureSensor         string `json:"gpu-temperature-sensor"`
-	RAMTemperatureSensor         string `json:"ram-temperature-sensor"`
-	MotherboardTemperatureSensor string `json:"motherboard-temperature-sensor"`
-	RAMTemperatureUnsupported    bool   `json:"ram-temperature-unsupported"`
-}
-
-type displaySettingsJSON struct {
-	Background     string               `json:"background"`
-	FFmpeg         string               `json:"ffmpeg"`
-	Theme          string               `json:"theme"`
-	Brightness     int                  `json:"brightness"`
-	ChunkWait      string               `json:"chunk-wait"`
-	SensorHelper   string               `json:"sensor-helper"`
-	SensorSnapshot string               `json:"sensor-snapshot,omitempty"`
-	Selection      displaySelectionJSON `json:"selection"`
-}
-
-func (d displaySettings) MarshalJSON() ([]byte, error) {
-	s := d.Selection
-	return json.Marshal(displaySettingsJSON{d.Background, d.FFmpeg, d.Theme, d.Brightness, d.ChunkWait, d.SensorHelper, d.SensorSnapshot, displaySelectionJSON{
-		s.CPUTemperatureSensor, s.GPUUsageSensor, s.GPUTemperatureSensor, s.RAMTemperatureSensor,
-		s.MotherboardTemperatureSensor, s.RAMTemperatureUnsupported,
-	}})
-}
-
-func (d *displaySettings) UnmarshalJSON(data []byte) error {
-	var v displaySettingsJSON
-	dec := json.NewDecoder(strings.NewReader(string(data)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&v); err != nil {
-		return err
-	}
-	var extra any
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("display settings contain trailing JSON")
-		}
-		return err
-	}
-	*d = displaySettings{Background: v.Background, FFmpeg: v.FFmpeg, Theme: v.Theme, Brightness: v.Brightness, ChunkWait: v.ChunkWait, SensorHelper: v.SensorHelper, SensorSnapshot: v.SensorSnapshot, Selection: metric.HardwareSensorSelection{
-		CPUTemperatureSensor: v.Selection.CPUTemperatureSensor, GPUUsageSensor: v.Selection.GPUUsageSensor,
-		GPUTemperatureSensor: v.Selection.GPUTemperatureSensor, RAMTemperatureSensor: v.Selection.RAMTemperatureSensor,
-		MotherboardTemperatureSensor: v.Selection.MotherboardTemperatureSensor, RAMTemperatureUnsupported: v.Selection.RAMTemperatureUnsupported,
-	}}
-	return nil
-}
-
 func normalizeDisplaySettings(value displaySettings) (displaySettings, error) {
 	value.Background = strings.TrimSpace(value.Background)
 	if value.Background == "" {
 		return displaySettings{}, errors.New("display background is required")
 	}
-	if value.Background != "" {
-		path, err := normalizeAbsolutePath(value.Background, "display background")
-		if err != nil {
-			return displaySettings{}, err
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return displaySettings{}, fmt.Errorf("display background: %w", err)
-		}
-		if !info.Mode().IsRegular() || info.Size() == 0 || strings.ToLower(filepath.Ext(path)) != ".mp4" {
-			return displaySettings{}, errors.New("display background must be an existing regular .mp4 file")
-		}
-		value.Background = path
+	path, err := normalizeAbsolutePath(value.Background, "display background")
+	if err != nil {
+		return displaySettings{}, err
 	}
-	var err error
+	info, err := os.Stat(path)
+	if err != nil {
+		return displaySettings{}, fmt.Errorf("display background: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 || strings.ToLower(filepath.Ext(path)) != ".mp4" {
+		return displaySettings{}, errors.New("display background must be an existing regular .mp4 file")
+	}
+	value.Background = path
 	value.FFmpeg, err = normalizeExecutablePath(strings.TrimSpace(value.FFmpeg), "FFmpeg executable")
 	if err != nil {
 		return displaySettings{}, err
 	}
 	value.Theme = strings.TrimSpace(value.Theme)
-	if value.Theme != "azure-ribbon" && value.Theme != "smon-halloween" {
+	if !slices.Contains(daemon.Themes(), value.Theme) {
 		return displaySettings{}, fmt.Errorf("unknown display theme %q", value.Theme)
 	}
 	if value.Brightness < 0 || value.Brightness > 102 {
@@ -140,8 +86,11 @@ func normalizeDisplaySettings(value displaySettings) (displaySettings, error) {
 	return value, nil
 }
 
-func displayFlags(flags *flag.FlagSet, saved *displaySettings) func() (*displaySettings, error) {
-	value := displaySettings{FFmpeg: "ffmpeg", Theme: "smon-halloween", Brightness: 32, ChunkWait: "3s"}
+// displayFlags registers the display flags with saved values as defaults and
+// returns a reader that yields nil when no background is configured. The
+// result is raw; normalizedSettings validates it once.
+func displayFlags(flags *flag.FlagSet, saved *displaySettings) func() *displaySettings {
+	value := displaySettings{FFmpeg: "ffmpeg", Theme: daemon.DefaultTheme, Brightness: 32, ChunkWait: "3s"}
 	if saved != nil {
 		value = *saved
 	}
@@ -158,25 +107,20 @@ func displayFlags(flags *flag.FlagSet, saved *displaySettings) func() (*displayS
 	ram := flags.String("ram-temperature-sensor", value.Selection.RAMTemperatureSensor, "RAM temperature sensor ID")
 	board := flags.String("motherboard-temperature-sensor", value.Selection.MotherboardTemperatureSensor, "motherboard temperature sensor ID")
 	ramUnsupported := flags.Bool("ram-temperature-unsupported", value.Selection.RAMTemperatureUnsupported, "use motherboard fallback for RAM temperature")
-	return func() (*displaySettings, error) {
-		result := displaySettings{Background: *background, FFmpeg: *ffmpeg, Theme: *theme, Brightness: *brightness, ChunkWait: *chunkWait, SensorHelper: *sensorHelper, SensorSnapshot: *sensorSnapshot,
-			Selection: metric.HardwareSensorSelection{CPUTemperatureSensor: *cpu, GPUUsageSensor: *gpuUsage, GPUTemperatureSensor: *gpuTemp, RAMTemperatureSensor: *ram, MotherboardTemperatureSensor: *board, RAMTemperatureUnsupported: *ramUnsupported}}
-		if strings.TrimSpace(result.Background) == "" {
-			return nil, nil
+	return func() *displaySettings {
+		if strings.TrimSpace(*background) == "" {
+			return nil
 		}
-		result, err := normalizeDisplaySettings(result)
-		return &result, err
+		return &displaySettings{Background: *background, FFmpeg: *ffmpeg, Theme: *theme, Brightness: *brightness, ChunkWait: *chunkWait, SensorHelper: *sensorHelper, SensorSnapshot: *sensorSnapshot,
+			Selection: metric.HardwareSensorSelection{CPUTemperatureSensor: *cpu, GPUUsageSensor: *gpuUsage, GPUTemperatureSensor: *gpuTemp, RAMTemperatureSensor: *ram, MotherboardTemperatureSensor: *board, RAMTemperatureUnsupported: *ramUnsupported}}
 	}
 }
 
+// options converts already-normalized settings into daemon options.
 func (d displaySettings) options() (daemon.DisplayOptions, error) {
-	normalized, err := normalizeDisplaySettings(d)
+	wait, err := time.ParseDuration(d.ChunkWait)
 	if err != nil {
 		return daemon.DisplayOptions{}, err
 	}
-	wait, err := time.ParseDuration(normalized.ChunkWait)
-	if err != nil {
-		return daemon.DisplayOptions{}, err
-	}
-	return daemon.DisplayOptions{FFmpeg: normalized.FFmpeg, Background: normalized.Background, Theme: normalized.Theme, Timeout: 2 * time.Second, FlushTimeout: 20 * time.Millisecond, ChunkWait: wait, Brightness: byte(normalized.Brightness)}, nil
+	return daemon.DisplayOptions{FFmpeg: d.FFmpeg, Background: d.Background, Theme: d.Theme, Timeout: 2 * time.Second, FlushTimeout: 20 * time.Millisecond, ChunkWait: wait, Brightness: byte(d.Brightness)}, nil
 }

@@ -11,12 +11,12 @@ import (
 
 // HardwareSensorSelection maps explicitly selected sensor IDs to output IDs.
 type HardwareSensorSelection struct {
-	CPUTemperatureSensor         string
-	GPUUsageSensor               string
-	GPUTemperatureSensor         string
-	RAMTemperatureSensor         string
-	MotherboardTemperatureSensor string
-	RAMTemperatureUnsupported    bool
+	CPUTemperatureSensor         string `json:"cpu-temperature-sensor"`
+	GPUUsageSensor               string `json:"gpu-usage-sensor"`
+	GPUTemperatureSensor         string `json:"gpu-temperature-sensor"`
+	RAMTemperatureSensor         string `json:"ram-temperature-sensor"`
+	MotherboardTemperatureSensor string `json:"motherboard-temperature-sensor"`
+	RAMTemperatureUnsupported    bool   `json:"ram-temperature-unsupported"`
 }
 
 func (s HardwareSensorSelection) Validate() error {
@@ -35,11 +35,14 @@ func (s HardwareSensorSelection) Readings(snapshot HelperSnapshot, snapshotErr e
 	if s.RAMTemperatureUnsupported {
 		ramID, ramLabel = s.MotherboardTemperatureSensor, "메인보드 온도"
 	}
-	routes := []struct{ id, sensorID, kind, label string }{
-		{"cpu.temperature", s.CPUTemperatureSensor, "Temperature", "CPU 온도"},
-		{"gpu.usage", s.GPUUsageSensor, "Load", "GPU 사용률"},
-		{"gpu.temperature", s.GPUTemperatureSensor, "Temperature", "GPU 온도"},
-		{"ram.temperature", ramID, "Temperature", ramLabel},
+	// hardware is a required LibreHardwareMonitor HardwareType prefix; it keeps
+	// an ACPI thermal zone or VRM sensor from being routed as CPU or GPU. The
+	// RAM route stays open because its fallback is a user-identified board sensor.
+	routes := []struct{ id, sensorID, kind, label, hardware string }{
+		{"cpu.temperature", s.CPUTemperatureSensor, "Temperature", "CPU 온도", "Cpu"},
+		{"gpu.usage", s.GPUUsageSensor, "Load", "GPU 사용률", "Gpu"},
+		{"gpu.temperature", s.GPUTemperatureSensor, "Temperature", "GPU 온도", "Gpu"},
+		{"ram.temperature", ramID, "Temperature", ramLabel, ""},
 	}
 	readings := make([]Reading, 0, len(routes))
 	for _, route := range routes {
@@ -76,6 +79,8 @@ func (s HardwareSensorSelection) Readings(snapshot HelperSnapshot, snapshotErr e
 					r.Error = "duplicate sensor ids"
 				case sensor.Type != route.kind:
 					r.Error = "sensor type mismatch"
+				case !strings.HasPrefix(sensor.HardwareType, route.hardware):
+					r.Error = "sensor hardware type mismatch"
 				case sensor.State != "ok":
 					r.Error = "helper state " + sensor.State
 				case sensor.Value == nil:

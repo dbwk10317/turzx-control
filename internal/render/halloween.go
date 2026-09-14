@@ -22,44 +22,10 @@ var (
 	halloweenCyan   = color.NRGBA{R: 0x67, G: 0xE8, B: 0xF9, A: 0xFF}
 )
 
-// HalloweenPreviewOverlay renders the compact overlay for smon-halloween.
-// Values are preview data; the LIVE counter identifies refreshed overlay frames.
+// HalloweenPreviewOverlay renders fixed preview data on the smon-halloween
+// layout; the LIVE counter identifies refreshed overlay frames.
 func HalloweenPreviewOverlay(elapsed time.Duration, counter uint64) ([]byte, error) {
-	img := image.NewNRGBA(image.Rect(0, 0, landscapeWidth, landscapeHeight))
-	for _, panel := range []image.Rectangle{
-		image.Rect(24, 20, 390, 210),
-		image.Rect(410, 20, 1270, 210),
-		image.Rect(1290, 20, 1896, 210),
-	} {
-		drawRounded(img, panel, 16, halloweenEdge)
-		drawRounded(img, panel.Inset(2), 14, halloweenPanel)
-	}
-
-	text(img, true, 48, 49, "10월 31일 토요일", 20, halloweenGold)
-	clock := time.Date(2026, 10, 31, 20, 42, 36, 0, time.Local).Add(elapsed).Format("15:04:05")
-	text(img, true, 46, 116, clock, 64, halloweenInk)
-	text(img, false, 48, 145, "할로윈의 밤", 19, halloweenMuted)
-	text(img, false, 48, 145, "할로윈의 밤", 19, halloweenMuted)
-	text(img, false, 48, 181, fmt.Sprintf("LIVE  %s  #%06d", formatElapsed(elapsed), counter), 16, halloweenGold)
-
-	text(img, true, 438, 49, "AI 사용량 · 미리보기", 18, halloweenMuted)
-	text(img, true, 438, 78, "CODEX", 20, halloweenGold)
-	text(img, true, 858, 78, "CLAUDE", 20, halloweenViolet)
-	drawHalloweenQuota(img, 438, 108, "5시간", "74%", "2시간 18분 뒤", "미리보기", 0.74, halloweenGold)
-	drawHalloweenQuota(img, 438, 163, "주간", "61%", "3일 6시간 뒤", "미리보기", 0.61, halloweenGold)
-	drawHalloweenQuota(img, 858, 108, "5시간", "88%", "1시간 42분 뒤", "미리보기", 0.88, halloweenViolet)
-	drawHalloweenQuota(img, 858, 163, "주간", "49%", "4일 11시간 뒤", "미리보기", 0.49, halloweenViolet)
-
-	text(img, true, 1318, 49, "하드웨어 · 미리보기", 18, halloweenMuted)
-	drawHalloweenMetric(img, 1318, "CPU", "34%", "52°C", 0.34, halloweenGold)
-	drawHalloweenMetric(img, 1504, "GPU", "67%", "61°C", 0.67, halloweenCyan)
-	drawHalloweenMetric(img, 1690, "RAM", "58%", "48°C", 0.58, halloweenViolet)
-
-	var encoded bytes.Buffer
-	if err := png.Encode(&encoded, img); err != nil {
-		return nil, err
-	}
-	return encoded.Bytes(), nil
+	return halloweenDashboardOverlay(previewDashboard(time.Date(2026, 10, 31, 20, 42, 36, 0, time.Local).Add(elapsed)), elapsed, counter, true)
 }
 
 // HalloweenOverlay renders the latest dashboard snapshot.
@@ -68,11 +34,15 @@ func HalloweenOverlay(snapshot func() Dashboard) Overlay {
 		if snapshot == nil {
 			return nil, fmt.Errorf("halloween overlay: nil dashboard snapshot")
 		}
-		return halloweenDashboardOverlay(snapshot(), elapsed, counter)
+		return halloweenDashboardOverlay(snapshot(), elapsed, counter, false)
 	}
 }
 
-func halloweenDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64) ([]byte, error) {
+func halloweenDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64, preview bool) ([]byte, error) {
+	suffix := ""
+	if preview {
+		suffix = " · 미리보기"
+	}
 	img := image.NewNRGBA(image.Rect(0, 0, landscapeWidth, landscapeHeight))
 	for _, panel := range []image.Rectangle{image.Rect(24, 20, 390, 210), image.Rect(410, 20, 1270, 210), image.Rect(1290, 20, 1896, 210)} {
 		drawRounded(img, panel, 16, halloweenEdge)
@@ -87,14 +57,14 @@ func halloweenDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint6
 	text(img, true, 46, 116, base.Format("15:04:05"), 64, halloweenInk)
 	text(img, false, 48, 145, "할로윈의 밤", 19, halloweenMuted)
 	text(img, false, 48, 181, fmt.Sprintf("LIVE  %s  #%06d", formatElapsed(elapsed), counter), 16, halloweenGold)
-	text(img, true, 438, 49, "AI 사용량", 18, halloweenMuted)
+	text(img, true, 438, 49, "AI 사용량"+suffix, 18, halloweenMuted)
 	text(img, true, 438, 78, "CODEX", 20, halloweenGold)
 	text(img, true, 858, 78, "CLAUDE", 20, halloweenViolet)
 	drawHalloweenQuota(img, 438, 108, "5시간", d.Codex.FiveHour.Value, d.Codex.FiveHour.Reset, d.Codex.FiveHour.Received, d.Codex.FiveHour.Fraction, halloweenGold)
 	drawHalloweenQuota(img, 438, 163, "주간", d.Codex.Weekly.Value, d.Codex.Weekly.Reset, d.Codex.Weekly.Received, d.Codex.Weekly.Fraction, halloweenGold)
 	drawHalloweenQuota(img, 858, 108, "5시간", d.Claude.FiveHour.Value, d.Claude.FiveHour.Reset, d.Claude.FiveHour.Received, d.Claude.FiveHour.Fraction, halloweenViolet)
 	drawHalloweenQuota(img, 858, 163, "주간", d.Claude.Weekly.Value, d.Claude.Weekly.Reset, d.Claude.Weekly.Received, d.Claude.Weekly.Fraction, halloweenViolet)
-	text(img, true, 1318, 49, "하드웨어", 18, halloweenMuted)
+	text(img, true, 1318, 49, "하드웨어"+suffix, 18, halloweenMuted)
 	drawHalloweenMetric(img, 1318, d.Hardware.CPU.Label, d.Hardware.CPU.Usage, d.Hardware.CPU.Temperature, d.Hardware.CPU.Fraction, halloweenGold)
 	drawHalloweenMetric(img, 1504, d.Hardware.GPU.Label, d.Hardware.GPU.Usage, d.Hardware.GPU.Temperature, d.Hardware.GPU.Fraction, halloweenCyan)
 	drawHalloweenMetric(img, 1690, d.Hardware.RAM.Label, d.Hardware.RAM.Usage, d.Hardware.RAM.Temperature, d.Hardware.RAM.Fraction, halloweenViolet)

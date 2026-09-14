@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -153,41 +154,53 @@ func (s *Sources) hardwareLoop() {
 	collector := metric.NewHardware()
 	var helper *metric.SensorProcess
 	var helperErr error
-	if s.opts.SensorHelper != "" {
-		helper, helperErr = metric.StartSensors(s.ctx, s.opts.SensorHelper)
-		if helperErr != nil {
-			log.Printf("sensor helper: %v", helperErr)
-		}
+	// A failed helper is restarted with the USB reconnect backoff (1..30 s).
+	helperBackoff := time.Second
+	var helperRetryAt time.Time
+	defer func() {
 		if helper != nil {
-			defer helper.Close()
+			helper.Close()
 		}
+	}()
+	failHelper := func(now time.Time, err error) {
+		helperErr = err
+		log.Printf("sensor helper: %v", err)
+		helperRetryAt = now.Add(helperBackoff)
+		helperBackoff = min(helperBackoff*2, 30*time.Second)
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for s.ctx.Err() == nil {
 		snapshot := collector.Sample(s.ctx)
 		var sample metric.HelperSnapshot
+		now := time.Now()
 		if s.opts.SensorSnapshot != "" {
-			sample, helperErr = metric.ReadSensorSnapshot(s.opts.SensorSnapshot, time.Now())
-		} else if helper != nil {
-			ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
-			sample, helperErr = helper.Sample(ctx)
-			cancel()
-			if helperErr != nil {
-				helper.Close()
-				helper = nil
-				log.Printf("sensor sample: %v", helperErr)
+			sample, helperErr = metric.ReadSensorSnapshot(s.opts.SensorSnapshot, now)
+		} else if s.opts.SensorHelper != "" {
+			if helper == nil && !now.Before(helperRetryAt) {
+				started, err := metric.StartSensors(s.ctx, s.opts.SensorHelper)
+				if err != nil {
+					failHelper(now, err)
+				} else {
+					helper = started
+				}
+			}
+			if helper != nil {
+				// Sample bounds itself (10 s for the first sample, 1.5 s after);
+				// a tighter context here would only cut into that budget.
+				sample, helperErr = helper.Sample(s.ctx)
+				if helperErr != nil {
+					helper.Close()
+					helper = nil
+					failHelper(now, helperErr)
+				} else {
+					helperBackoff = time.Second
+				}
 			}
 		}
 		// Retain the helper error after shutdown; a failed sensor never turns into
 		// an unsupported or unselected sensor on the next hardware tick.
-		for _, replacement := range s.opts.Selection.Readings(sample, helperErr, time.Now()) {
-			for i := range snapshot.Readings {
-				if snapshot.Readings[i].ID == replacement.ID {
-					snapshot.Readings[i] = replacement
-				}
-			}
-		}
+		snapshot.Readings = append(snapshot.Readings, s.opts.Selection.Readings(sample, helperErr, time.Now())...)
 		s.mu.Lock()
 		s.hardware = snapshot
 		s.mu.Unlock()
@@ -221,6 +234,8 @@ func (s *Sources) codexLoop(ctx context.Context, r *sourceRun) {
 				err = r.model.Update(update)
 			}
 		}
+		// Wait the current delay, then grow it for the next failure: 30 s, 60 s, ... 5 min.
+		wait := delay
 		if err != nil {
 			s.codexError(ctx, r, err)
 			if codex.IsAuthRequired(err) || codex.IsAccountChanged(err) {
@@ -229,11 +244,12 @@ func (s *Sources) codexLoop(ctx context.Context, r *sourceRun) {
 			delay = min(delay*2, 5*time.Minute)
 		} else {
 			delay = 30 * time.Second
+			wait = delay
 			if s.onCodex != nil {
 				s.onCodex(usage.OK)
 			}
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -246,7 +262,7 @@ func (s *Sources) codexLoop(ctx context.Context, r *sourceRun) {
 			}
 			// Do not let notifications bypass error backoff.
 			if err != nil {
-				if !waitSource(ctx, delay) {
+				if !waitSource(ctx, wait) {
 					return
 				}
 			}
@@ -299,7 +315,8 @@ func (s *inboxScan) observe(dir string, r *sourceRun, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	entries, readErr := f.ReadDir(513)
+	// Each session leaves a .json and a .lock file; bound the scan at 512 sessions.
+	entries, readErr := f.ReadDir(2*512 + 1)
 	closeErr := f.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return errors.Join(readErr, closeErr)
@@ -307,16 +324,16 @@ func (s *inboxScan) observe(dir string, r *sourceRun, now time.Time) error {
 	if closeErr != nil {
 		return closeErr
 	}
+	entries = slices.DeleteFunc(entries, func(entry os.DirEntry) bool {
+		return !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json")
+	})
 	if len(entries) > 512 {
-		return errors.New("Claude inbox exceeds 512 entries; select a new inbox directory")
+		return errors.New("Claude inbox exceeds 512 sessions; select a new inbox directory")
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	seen := make(map[string]bool)
 	var baseline *claude.Envelope
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
 		name := entry.Name()
 		seen[name] = true
 		receiver := s.receivers[name]
@@ -327,17 +344,14 @@ func (s *inboxScan) observe(dir string, r *sourceRun, now time.Time) error {
 			}
 			s.receivers[name] = receiver
 		}
-		e, fresh, err := receiver.Observe()
-		if err != nil {
-			return err
-		}
+		e, fresh := receiver.Observe()
 		if e.SessionID == "" {
 			continue
 		}
 		if !fresh {
 			if !s.hasObservation && (baseline == nil || ((baseline.FiveHour == nil && baseline.Weekly == nil) && (e.FiveHour != nil || e.Weekly != nil))) {
-				copy := e
-				baseline = &copy
+				candidate := e
+				baseline = &candidate
 			}
 			continue
 		}

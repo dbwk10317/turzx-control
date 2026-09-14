@@ -89,14 +89,10 @@ func run(ctx context.Context, args []string) (runErr error) {
 	if flags.NArg() != 0 {
 		return errors.New("positional arguments are not supported")
 	}
-	display, err := readDisplay()
-	if err != nil {
-		return err
-	}
 	value, err := normalizedSettings(settings{
 		ListenAddress: *listenAddress, CodexBin: *codexBin, CodexHome: *codexHome,
 		ClaudeBin: *claudeBin, ClaudeConfigDir: *claudeConfigDir,
-		ClaudeStatusBin: *claudeStatusBin, ClaudeInboxDir: *claudeInboxDir, Display: display,
+		ClaudeStatusBin: *claudeStatusBin, ClaudeInboxDir: *claudeInboxDir, Display: readDisplay(),
 	})
 	if err != nil {
 		return err
@@ -138,7 +134,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	closeRuntime := app.startRuntime(ctx, display)
+	closeRuntime := app.startRuntime(ctx, value.Display)
 	defer func() { runErr = errors.Join(runErr, closeRuntime()) }()
 	server := &http.Server{
 		Handler:           app,

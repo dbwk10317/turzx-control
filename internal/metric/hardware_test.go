@@ -82,15 +82,12 @@ func TestRAMUsageAndUnavailableSensors(t *testing.T) {
 	}
 
 	snapshot := collector.Sample(context.Background())
-	ram := snapshot.Readings[4]
+	if len(snapshot.Readings) != 2 || snapshot.Readings[0].ID != "cpu.usage" || snapshot.Readings[1].ID != "ram.usage" {
+		t.Fatalf("readings = %#v, want cpu.usage and ram.usage only", snapshot.Readings)
+	}
+	ram := snapshot.Readings[1]
 	if ram.State != "ok" || ram.Value == nil || *ram.Value != 0 || ram.ObservedAt == nil {
 		t.Fatalf("RAM reading = %#v, want a valid zero", ram)
-	}
-	for _, index := range []int{1, 2, 3, 5} {
-		reading := snapshot.Readings[index]
-		if reading.State != "unconnected" || reading.Value != nil || reading.ObservedAt != nil {
-			t.Fatalf("unavailable reading = %#v, want unconnected without a value", reading)
-		}
 	}
 }
 
@@ -105,8 +102,8 @@ func TestRAMReadErrorDoesNotReuseValue(t *testing.T) {
 		return nil, errors.New("temporary failure")
 	}
 
-	first := collector.Sample(context.Background()).Readings[4]
-	failed := collector.Sample(context.Background()).Readings[4]
+	first := collector.Sample(context.Background()).Readings[1]
+	failed := collector.Sample(context.Background()).Readings[1]
 	if first.State != "ok" || first.Value == nil || *first.Value != 42 {
 		t.Fatalf("first RAM reading = %#v, want 42%%", first)
 	}
@@ -122,7 +119,7 @@ func TestInvalidNumbersAreErrors(t *testing.T) {
 	}
 
 	snapshot := collector.Sample(context.Background())
-	for _, index := range []int{0, 4} {
+	for _, index := range []int{0, 1} {
 		reading := snapshot.Readings[index]
 		if reading.State != "error" || reading.Value != nil || reading.ObservedAt != nil {
 			t.Fatalf("invalid reading = %#v, want error without a value", reading)

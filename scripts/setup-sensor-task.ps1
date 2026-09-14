@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Install a protected, read-only sensor publisher. Never elevate the control app.
+# Run as the Windows user that runs TURZX Control. The UAC prompt must be answered
+# with that same user's administrator (split) token: the task runs under the
+# caller's own SID, so elevating as a different administrator account is refused.
 [CmdletBinding()]
 param(
     [ValidateSet('Install', 'Remove', 'Status')][string]$Action = 'Status',
@@ -18,7 +21,7 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $sid = [Security.Principal.SecurityIdentifier]::new($UserSid)
-if ($sid.Value -ne $identity.User.Value) { throw 'Run setup as the same Windows user that runs TURZX Control.' }
+if ($sid.Value -ne $identity.User.Value) { throw 'Run setup as the same Windows user that runs TURZX Control; the elevated identity must be that user''s own administrator (split) token, not another administrator account, because the task runs under the caller''s SID.' }
 $taskName = 'TURZX Sensors ' + $sid.Value
 $programRoot = Join-Path $env:ProgramFiles 'TURZXControl'
 $dataRoot = Join-Path $env:ProgramData 'TURZXControl'
@@ -26,51 +29,8 @@ $sensorRoot = Join-Path $programRoot 'Sensors'
 $userData = Join-Path (Join-Path $dataRoot 'Sensors') $sid.Value
 $snapshotPath = Join-Path $userData 'snapshot.json'
 $recordPath = Join-Path $userData 'installation.json'
-$adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
-$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
-
-function Assert-NoReparse([string]$Path) {
-    $itemPath = [IO.Path]::GetFullPath($Path)
-    while ($itemPath) {
-        if (Test-Path -LiteralPath $itemPath) {
-            $item = Get-Item -LiteralPath $itemPath -Force
-            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse point is not permitted: $itemPath" }
-        }
-        $parent = [IO.Path]::GetDirectoryName($itemPath)
-        if ($parent -eq $itemPath) { break }
-        $itemPath = $parent
-    }
-}
-
-function Assert-ProtectedDirectory([string]$Path) {
-    Assert-NoReparse $Path
-    $acl = Get-Acl -LiteralPath $Path
-    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-    if ($owner -notin @($adminSid.Value, $systemSid.Value) -or -not $acl.AreAccessRulesProtected) {
-        throw "Existing directory is not owned and protected by administrators: $Path"
-    }
-    $readOnly = [Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize
-    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-        if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @($adminSid.Value, $systemSid.Value)) {
-            if (($rule.FileSystemRights -band (-bnot [int]$readOnly)) -ne 0) { throw "Non-administrator write access on $Path" }
-        }
-    }
-}
-
-function New-ProtectedDirectory([string]$Path) {
-    Assert-NoReparse $Path
-    if (Test-Path -LiteralPath $Path) { Assert-ProtectedDirectory $Path; return }
-    $acl = [Security.AccessControl.DirectorySecurity]::new()
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.SetOwner($adminSid)
-    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-    foreach ($trustedSid in @($adminSid, $systemSid)) {
-        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($trustedSid, 'FullControl', $inherit, 'None', 'Allow'))
-    }
-    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'ReadAndExecute', $inherit, 'None', 'Allow'))
-    [IO.Directory]::CreateDirectory($Path, $acl) | Out-Null
-    Assert-ProtectedDirectory $Path
-}
+# Assert-NoReparse, Assert-ProtectedDirectory, New-ProtectedDirectory, $adminSid, $systemSid, $usersSid.
+Import-Module "$PSScriptRoot\sensor-acl.psm1" -Force
 
 function Get-OwnedTask {
     $queryErrors = @()
@@ -143,7 +103,7 @@ trap {
     $setupFailure = $_
     if ($ElevatedStage -and $administrator) {
         try {
-            New-ProtectedDirectory $dataRoot
+            New-ProtectedDirectory $dataRoot $usersSid
             $errorPath = Join-Path $dataRoot ('setup-error-' + $sid.Value + '.txt')
             Assert-NoReparse $errorPath
             $setupFailure.ToString() | Set-Content -LiteralPath $errorPath -Encoding UTF8
@@ -174,16 +134,17 @@ if ($Action -eq 'Install') {
     $hasher = [Security.Cryptography.SHA256]::Create()
     try { $manifestHash = ([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($manifest)))).Replace('-', '').ToLowerInvariant() }
     finally { $hasher.Dispose() }
-    if ($manifestHash -ne $expectedManifestHash) { throw 'Helper differs from the pinned, reviewed development publish; refusing installation.' }
     $version = $manifestHash.Substring(0, 20)
     # A fresh protected directory prevents reuse of altered files from an old install.
     $destination = Join-Path $sensorRoot ($version + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 }
 
+# Read-only checks end here; -ValidateOnly reports the hash pin instead of enforcing it.
 if ($ValidateOnly) {
-    [ordered]@{ action = $Action; task_name = $taskName; source = $HelperDirectory; destination = $destination; snapshot = $snapshotPath; file_count = $files.Count; elevation_required = -not $administrator } | ConvertTo-Json
+    [ordered]@{ action = $Action; task_name = $taskName; source = $HelperDirectory; destination = $destination; snapshot = $snapshotPath; file_count = $files.Count; manifest_hash = $manifestHash; manifest_pinned = ($Action -ne 'Install' -or $manifestHash -eq $expectedManifestHash); elevation_required = -not $administrator } | ConvertTo-Json
     return
 }
+if ($Action -eq 'Install' -and $manifestHash -ne $expectedManifestHash) { throw 'Helper differs from the pinned, reviewed development publish; refusing installation.' }
 
 if (-not $administrator) {
     if ($ElevatedStage) { throw 'Administrator approval was not granted.' }
@@ -192,7 +153,8 @@ if (-not $administrator) {
     }
     $arguments = '-NoProfile -File "' + $PSCommandPath + '" -Action ' + $Action + ' -UserSid ' + $sid.Value + ' -ElevatedStage'
     if ($HelperDirectory) { $arguments += ' -HelperDirectory "' + $HelperDirectory + '"' }
-    $child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+    # The current host (powershell.exe 5.1 or pwsh.exe 7) re-runs this script elevated.
+    $child = Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     if ($child.ExitCode -ne 0) {
         $details = ''
         $errorPath = Join-Path $dataRoot ('setup-error-' + $sid.Value + '.txt')
@@ -219,7 +181,10 @@ if ($Action -eq 'Remove') {
 }
 
 # Every executable and output parent is administrator-owned before task registration.
-foreach ($dir in @($programRoot, $sensorRoot, $destination, $dataRoot, (Join-Path $dataRoot 'Sensors'), $userData)) { New-ProtectedDirectory $dir }
+foreach ($dir in @($programRoot, $sensorRoot, $destination)) { New-ProtectedDirectory $dir $sid }
+# Shared parents are readable by all users so a second Windows user's daemon passes the parent checks.
+foreach ($dir in @($dataRoot, (Join-Path $dataRoot 'Sensors'))) { New-ProtectedDirectory $dir $usersSid }
+New-ProtectedDirectory $userData $sid
 $existingTask = Get-OwnedTask
 if ($existingTask) { throw 'Remove the existing sensor task before installing a different version.' }
 foreach ($file in $files) {
@@ -252,6 +217,8 @@ $definition.Settings.DisallowStartIfOnBatteries = $false
 $definition.Settings.StopIfGoingOnBatteries = $false
 $definition.Settings.StartWhenAvailable = $true
 $definition.Settings.MultipleInstances = 2 # TASK_INSTANCES_IGNORE_NEW
+$definition.Settings.RestartCount = 3
+$definition.Settings.RestartInterval = 'PT1M'
 $record = [ordered]@{ schema_version = 1; user_sid = $sid.Value; task_name = $taskName; executable = $executable; snapshot = $snapshotPath; files = $files }
 Assert-NoReparse $recordPath
 $record | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $recordPath -Encoding UTF8

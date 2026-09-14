@@ -82,9 +82,7 @@ func TestSameValueTimestampsAndFreshness(t *testing.T) {
 	b := obs(30, n.Add(4*time.Hour), n)
 	_ = m.Update(Update{Scope: s, Now: n, Windows: both(a, b)})
 	first := scopeView(t, m.ViewAt(n)).Windows[FiveHour]
-	source := n.Add(5 * time.Minute)
 	updated := obs(20, n.Add(3*time.Hour), n.Add(10*time.Minute))
-	updated.SourceObservedAt = &source
 	_ = m.Update(Update{Scope: s, Now: n.Add(10 * time.Minute), Windows: map[WindowKind]Observation{FiveHour: updated}})
 	second := scopeView(t, m.ViewAt(n.Add(10*time.Minute))).Windows[FiveHour]
 	if second.LastChangedAt == nil || first.LastChangedAt == nil || !second.LastChangedAt.Equal(*first.LastChangedAt) || second.ReceivedAt == nil || !second.ReceivedAt.Equal(n.Add(10*time.Minute)) {
@@ -93,9 +91,6 @@ func TestSameValueTimestampsAndFreshness(t *testing.T) {
 	if received := scopeView(t, m.ViewAt(n.Add(10*time.Minute))).Windows[Weekly].ReceivedAt; received == nil || !received.Equal(n) {
 		t.Fatal("other window freshness changed")
 	}
-	if second.SourceObservedAt != nil {
-		t.Fatal("same content changed source timestamp")
-	}
 	if scopeView(t, m.ViewAt(n.Add(2*time.Hour))).Windows[FiveHour].Status != Stale {
 		t.Fatal("expected stale")
 	}
@@ -103,9 +98,7 @@ func TestSameValueTimestampsAndFreshness(t *testing.T) {
 
 func TestRepeatedMissingAndSameValueRecovery(t *testing.T) {
 	n := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	source := n.Add(-time.Minute)
 	a := obs(20, n.Add(3*time.Hour), n)
-	a.SourceObservedAt = &source
 	m := New(time.Hour)
 	s := Scope{Provider: "claude"}
 	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{FiveHour: a}}); err != nil {
@@ -122,37 +115,46 @@ func TestRepeatedMissingAndSameValueRecovery(t *testing.T) {
 		t.Fatalf("repeated missing: %#v", missing)
 	}
 	recovered := obs(20, n.Add(3*time.Hour), n.Add(3*time.Minute))
-	newSource := n.Add(3 * time.Minute)
-	recovered.SourceObservedAt = &newSource
 	if err := m.Update(Update{Scope: s, Now: n.Add(3 * time.Minute), Windows: map[WindowKind]Observation{FiveHour: recovered}}); err != nil {
 		t.Fatal(err)
 	}
 	got := scopeView(t, m.ViewAt(n.Add(3*time.Minute))).Windows[FiveHour]
-	if got.Status != OK || got.Current == nil || got.Previous != nil || got.LastChangedAt == nil || !got.LastChangedAt.Equal(n) || got.SourceObservedAt == nil || !got.SourceObservedAt.Equal(source) {
+	if got.Status != OK || got.Current == nil || got.Previous != nil || got.LastChangedAt == nil || !got.LastChangedAt.Equal(n) {
 		t.Fatalf("same value recovery: %#v", got)
 	}
 }
 
-func TestAuthOverrideClearsHistoryAndRecovers(t *testing.T) {
+// Auth and account errors show their cause but keep the connection's reset
+// history, so an earlier reset time is still rejected after recovery.
+func TestAuthErrorPreservesResetHistory(t *testing.T) {
 	n := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	m := New(time.Hour)
 	s := Scope{Provider: "codex"}
-	a := obs(40, n.Add(2*time.Hour), n)
-	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{FiveHour: a}}); err != nil {
+	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{FiveHour: obs(40, n.Add(2*time.Hour), n)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Update(Update{Scope: s, Status: AuthRequired, Now: n.Add(time.Minute)}); err != nil {
+	for _, status := range []Status{AuthRequired, AccountCheckRequired, Error} {
+		if err := m.Update(Update{Scope: s, Status: status, Now: n.Add(time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		v := scopeView(t, m.ViewAt(n.Add(time.Minute)))
+		if v.Status != status || v.Windows[FiveHour].Current != nil || v.Windows[FiveHour].Previous == nil {
+			t.Fatalf("%s: %#v", status, v.Windows[FiveHour])
+		}
+	}
+	earlier := obs(5, n.Add(90*time.Minute), n.Add(2*time.Minute))
+	if err := m.Update(Update{Scope: s, Now: n.Add(2 * time.Minute), Windows: map[WindowKind]Observation{FiveHour: earlier}}); err != nil {
 		t.Fatal(err)
 	}
-	auth := scopeView(t, m.ViewAt(n.Add(time.Minute))).Windows[FiveHour]
-	if auth.Status != AuthRequired || auth.Current != nil || auth.Previous != nil {
-		t.Fatalf("auth override: %#v", auth)
+	if got := scopeView(t, m.ViewAt(n.Add(2*time.Minute))).Windows[FiveHour]; got.Current != nil {
+		t.Fatalf("earlier reset accepted after auth error: %#v", got)
 	}
-	if err := m.Update(Update{Scope: s, Now: n.Add(2 * time.Minute), Windows: map[WindowKind]Observation{FiveHour: obs(40, n.Add(2*time.Hour), n.Add(2*time.Minute))}}); err != nil {
+	same := obs(40, n.Add(2*time.Hour), n.Add(3*time.Minute))
+	if err := m.Update(Update{Scope: s, Now: n.Add(3 * time.Minute), Windows: map[WindowKind]Observation{FiveHour: same}}); err != nil {
 		t.Fatal(err)
 	}
-	got := scopeView(t, m.ViewAt(n.Add(2*time.Minute))).Windows[FiveHour]
-	if got.Status != OK || got.Current == nil || got.Previous != nil || got.LastChangedAt == nil || !got.LastChangedAt.Equal(n.Add(2*time.Minute)) {
+	got := scopeView(t, m.ViewAt(n.Add(3*time.Minute))).Windows[FiveHour]
+	if got.Status != OK || got.Current == nil || got.Previous != nil || got.LastChangedAt == nil || !got.LastChangedAt.Equal(n) {
 		t.Fatalf("recovered value: %#v", got)
 	}
 }
@@ -180,6 +182,27 @@ func TestHistoricalBaselineIsNeverFresh(t *testing.T) {
 	}
 }
 
+// A live observation whose reset already passed is still the baseline the
+// next reset must move past, and is reported as refresh pending.
+func TestExpiredFirstObservationBecomesBaseline(t *testing.T) {
+	n := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m := New(time.Hour)
+	s := Scope{Provider: "codex"}
+	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{FiveHour: obs(80, n.Add(-time.Minute), n)}}); err != nil {
+		t.Fatal(err)
+	}
+	got := scopeView(t, m.ViewAt(n)).Windows[FiveHour]
+	if got.Status != RefreshPending || got.Current != nil || got.Previous == nil || got.ReceivedAt == nil {
+		t.Fatalf("expired first observation: %#v", got)
+	}
+	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{FiveHour: obs(1, n.Add(-2*time.Minute), n)}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := scopeView(t, m.ViewAt(n)).Windows[FiveHour]; got.Previous.UsedPercent != 80 {
+		t.Fatalf("earlier expired reset replaced baseline: %#v", got)
+	}
+}
+
 func TestInvalidUpdateIsAtomic(t *testing.T) {
 	n := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	m := New(time.Hour)
@@ -190,9 +213,9 @@ func TestInvalidUpdateIsAtomic(t *testing.T) {
 	before := m.ViewAt(n)
 	invalid := []Update{
 		{Scope: s, Status: Status("bad")},
+		{Scope: s, Status: Unavailable},
 		{Scope: s, Windows: map[WindowKind]Observation{WindowKind("seven_day"): obs(1, n.Add(time.Hour), n)}},
-		{Scope: s, Unsupported: map[WindowKind]bool{WindowKind("seven_day"): true}},
-		{Scope: s, Windows: map[WindowKind]Observation{FiveHour: obs(1, n.Add(time.Hour), n)}, Unsupported: map[WindowKind]bool{FiveHour: true}},
+		{Scope: s, StaleAfter: -time.Second},
 	}
 	for _, update := range invalid {
 		if err := m.Update(update); err == nil {
@@ -229,25 +252,15 @@ func TestScopeFreshnessPolicies(t *testing.T) {
 	}
 }
 
-func TestFailureUnsupportedDisconnectAndInvalid(t *testing.T) {
+func TestDisconnectClearsHistoryAndInvalidValuesAreRejected(t *testing.T) {
 	n := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	m := New(time.Hour)
 	s := Scope{Provider: "p"}
 	a := obs(20, n.Add(time.Hour), n)
 	_ = m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{FiveHour: a}})
-	if err := m.Update(Update{Scope: s, Status: AuthRequired, Now: n.Add(time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	if v := scopeView(t, m.ViewAt(n)).Windows[FiveHour]; v.Current != nil || v.Previous != nil || v.Status != AuthRequired {
-		t.Fatalf("auth: %#v", v)
-	}
-	_ = m.Update(Update{Scope: s, Status: Unavailable, Now: n})
-	if v := scopeView(t, m.ViewAt(n)); len(v.Windows) != 2 || v.Windows[FiveHour].Previous != nil || v.Windows[FiveHour].Status != Unavailable {
-		t.Fatal("unsupported retained history")
-	}
 	_ = m.Update(Update{Scope: s, Status: Disconnected, Now: n})
-	if len(m.ViewAt(n).Scopes) != 1 {
-		t.Fatal("scope missing")
+	if v := scopeView(t, m.ViewAt(n)); len(v.Windows) != 2 || v.Windows[FiveHour].Previous != nil || v.Status != Disconnected {
+		t.Fatalf("disconnect retained history: %#v", v)
 	}
 	if err := m.Update(Update{Scope: s, Now: n, Windows: nil}); err != nil {
 		t.Fatal(err)
@@ -282,7 +295,7 @@ func TestPreResetMissingRejectsEarlierFutureReset(t *testing.T) {
 	}
 }
 
-func TestCollectingAndMixedUnsupported(t *testing.T) {
+func TestCollectingThenPartialWindows(t *testing.T) {
 	n := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	m := New(-time.Hour)
 	s := Scope{Provider: "p"}
@@ -293,11 +306,11 @@ func TestCollectingAndMixedUnsupported(t *testing.T) {
 		t.Fatalf("collecting windows: %#v", v)
 	}
 	weekly := obs(25, n.Add(time.Hour), n)
-	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{Weekly: weekly}, Unsupported: map[WindowKind]bool{FiveHour: true}}); err != nil {
+	if err := m.Update(Update{Scope: s, Now: n, Windows: map[WindowKind]Observation{Weekly: weekly}}); err != nil {
 		t.Fatal(err)
 	}
 	v := scopeView(t, m.ViewAt(n))
 	if v.Windows[FiveHour].Status != Unavailable || v.Windows[FiveHour].Current != nil || v.Windows[Weekly].Status != OK || v.Windows[Weekly].Current == nil {
-		t.Fatalf("mixed unsupported: %#v", v)
+		t.Fatalf("never-provided window: %#v", v)
 	}
 }

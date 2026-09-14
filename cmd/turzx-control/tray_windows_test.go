@@ -74,3 +74,12 @@ func TestTrayPreservesServerContextErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestTrayStartFailureIsReportedImmediately(t *testing.T) {
+	started := time.Now()
+	err := runTrayLifecycle(context.Background(), func(context.Context) error { return nil },
+		func(ready, exit func()) { exit() }, func() {})
+	if err == nil || time.Since(started) > time.Second {
+		t.Fatalf("runTrayLifecycle() = %v after %s, want immediate tray error", err, time.Since(started))
+	}
+}

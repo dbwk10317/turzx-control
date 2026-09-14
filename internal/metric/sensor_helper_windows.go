@@ -1,7 +1,7 @@
-//go:build windows
-
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Uses Go's standard Windows process configuration; no upstream code copied.
+
+//go:build windows
 
 package metric
 

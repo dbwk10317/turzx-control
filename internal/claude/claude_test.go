@@ -53,13 +53,13 @@ func TestObserverRejectsMalformedAndWrongBinding(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"schema_version":1,"binding_id":"other","session_id":"sess-1","sequence":2}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, fresh, _ := r.Observe(); fresh {
+	if _, fresh := r.Observe(); fresh {
 		t.Fatal("wrong binding accepted")
 	}
 	if err := os.WriteFile(p, []byte(`{`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, fresh, _ := r.Observe(); fresh {
+	if _, fresh := r.Observe(); fresh {
 		t.Fatal("malformed accepted")
 	}
 }
@@ -79,17 +79,17 @@ func TestObserverIgnoresDuplicateAndLowerSequence(t *testing.T) {
 		}
 	}
 	writeEnvelope(3)
-	if _, fresh, _ := r.Observe(); fresh {
+	if _, fresh := r.Observe(); fresh {
 		t.Fatal("baseline was fresh")
 	}
 	for _, sequence := range []uint64{3, 2} {
 		writeEnvelope(sequence)
-		if _, fresh, _ := r.Observe(); fresh {
+		if _, fresh := r.Observe(); fresh {
 			t.Fatalf("sequence %d was fresh", sequence)
 		}
 	}
 	writeEnvelope(4)
-	if _, fresh, _ := r.Observe(); !fresh {
+	if _, fresh := r.Observe(); !fresh {
 		t.Fatal("higher sequence was not fresh")
 	}
 }
@@ -136,13 +136,13 @@ func TestStoreSequenceAndBaseline(t *testing.T) {
 		t.Fatalf("first write: %+v %v", e, err)
 	}
 	r, _ := NewReceiver(filepath.Join(d, "sess-1.json"), "binding")
-	if _, fresh, _ := r.Observe(); fresh {
+	if _, fresh := r.Observe(); fresh {
 		t.Fatal("baseline was fresh")
 	}
 	if _, err := st.Write(s); err != nil {
 		t.Fatal(err)
 	}
-	if _, fresh, _ := r.Observe(); !fresh {
+	if _, fresh := r.Observe(); !fresh {
 		t.Fatal("higher sequence not fresh")
 	}
 }
@@ -169,5 +169,29 @@ func TestConcurrentWriters(t *testing.T) {
 	}
 	if e.Sequence != 8 {
 		t.Fatalf("sequence=%d", e.Sequence)
+	}
+}
+
+func TestStoreSkipsStatuslineWithoutRateLimits(t *testing.T) {
+	d := t.TempDir()
+	st, _ := NewStore(d, "binding")
+	full, _ := ParseStatusline([]byte(sample))
+	if _, err := st.Write(full); err != nil {
+		t.Fatal(err)
+	}
+	empty, _ := ParseStatusline([]byte(`{"session_id":"sess-1"}`))
+	if _, err := st.Write(empty); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(d, "sess-1.json"))
+	var e Envelope
+	if err := json.Unmarshal(b, &e); err != nil {
+		t.Fatal(err)
+	}
+	if e.Sequence != 1 || e.FiveHour == nil {
+		t.Fatalf("empty statusline replaced observation: %+v", e)
+	}
+	if _, err := os.Stat(filepath.Join(d, "sess-2.json")); !os.IsNotExist(err) {
+		t.Fatalf("stat = %v, want no file for a session without rate limits", err)
 	}
 }

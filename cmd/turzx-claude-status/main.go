@@ -6,7 +6,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -30,23 +29,10 @@ func main() {
 
 var executeForward = forwardCommand
 
-type cappedBuffer struct {
-	bytes.Buffer
-	max int
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	remaining := b.max - b.Len()
-	if remaining > 0 {
-		if remaining < len(p) {
-			p = p[:remaining]
-		}
-		_, _ = b.Buffer.Write(p)
-	}
-	return n, nil
-}
-
+// run forwards stdin to the user's existing statusline first and only then
+// records the allowed fields. When a forward command exists its result is the
+// exit status; an inbox failure is reported on stderr so the user's statusline
+// output is never discarded because of our bookkeeping.
 func run(ctx context.Context, args []string, input io.Reader, output, errorOutput io.Writer) error {
 	flags := flag.NewFlagSet("turzx-claude-status", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -73,12 +59,12 @@ func run(ctx context.Context, args []string, input io.Reader, output, errorOutpu
 		if *forwardTimeout <= 0 {
 			return errors.New("-forward-timeout must be positive")
 		}
-		capture := &cappedBuffer{max: claude.MaxJSONSize + 1}
+		capture := &claude.HeadBuffer{Max: claude.MaxJSONSize + 1}
 		forwardInput := io.TeeReader(input, capture)
 		forwardCtx, cancel := context.WithTimeout(ctx, *forwardTimeout)
 		forwardErr = executeForward(forwardCtx, *forward, forwardInput, output, errorOutput)
 		cancel()
-		if remaining := int64(capture.max - capture.Len()); remaining > 0 {
+		if remaining := int64(capture.Max - capture.Len()); remaining > 0 {
 			_, _ = io.Copy(io.Discard, io.LimitReader(forwardInput, remaining))
 		}
 		raw = capture.Bytes()
@@ -104,7 +90,10 @@ func run(ctx context.Context, args []string, input io.Reader, output, errorOutpu
 	if strings.TrimSpace(*forward) == "" {
 		return ingestErr
 	}
-	return errors.Join(ingestErr, forwardErr)
+	if ingestErr != nil {
+		fmt.Fprintln(errorOutput, ingestErr)
+	}
+	return forwardErr
 }
 
 func forwardCommand(ctx context.Context, command string, input io.Reader, output, errorOutput io.Writer) error {

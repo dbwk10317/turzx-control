@@ -44,7 +44,7 @@ func TestClaudeUpdateChecksBindingAndPreservesFraction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if update.StaleAfter != ClaudeStaleAfter || update.Windows[FiveHour].UsedPercent != 2.5 || update.Windows[FiveHour].SourceObservedAt != nil {
+	if update.StaleAfter != ClaudeStaleAfter || update.Windows[FiveHour].UsedPercent != 2.5 {
 		t.Fatalf("unexpected update: %#v", update)
 	}
 	envelope.BindingID = "old"

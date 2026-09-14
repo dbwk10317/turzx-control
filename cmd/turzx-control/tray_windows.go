@@ -79,7 +79,9 @@ func runTrayLifecycle(ctx context.Context, serve func(context.Context) error, ru
 	defer cancel()
 
 	result := make(chan error, 1)
+	ready := false
 	run(func() {
+		ready = true
 		go func() {
 			<-serveCtx.Done()
 			quit()
@@ -93,6 +95,9 @@ func runTrayLifecycle(ctx context.Context, serve func(context.Context) error, ru
 		cancel()
 	})
 	cancel()
+	if !ready {
+		return errors.New("tray did not start; control surface never served")
+	}
 
 	select {
 	case err := <-result:

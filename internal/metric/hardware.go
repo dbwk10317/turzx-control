@@ -55,21 +55,14 @@ func NewHardware() *Hardware {
 	}
 }
 
-// Sample collects each hardware metric independently.
+// Sample collects CPU and RAM usage independently. Helper-backed sensors are
+// appended by the caller from HardwareSensorSelection.Readings.
 func (h *Hardware) Sample(ctx context.Context) HardwareSnapshot {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	now := h.now()
-	readings := []Reading{
-		h.sampleCPU(ctx, now),
-		{ID: "cpu.temperature", Unit: "celsius", Source: "librehardwaremonitor", State: "unconnected"},
-		{ID: "gpu.usage", Unit: "%", Source: "librehardwaremonitor", State: "unconnected"},
-		{ID: "gpu.temperature", Unit: "celsius", Source: "librehardwaremonitor", State: "unconnected"},
-		h.sampleRAM(ctx, now),
-		{ID: "ram.temperature", Unit: "celsius", Source: "librehardwaremonitor", State: "unconnected"},
-	}
-	return HardwareSnapshot{ObservedAt: now, Readings: readings}
+	return HardwareSnapshot{ObservedAt: now, Readings: []Reading{h.sampleCPU(ctx, now), h.sampleRAM(ctx, now)}}
 }
 
 func (h *Hardware) sampleCPU(ctx context.Context, now time.Time) Reading {

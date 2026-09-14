@@ -59,7 +59,7 @@ func TestListSensorsEmitsHelperSnapshot(t *testing.T) {
 	if err := run(context.Background(), []string{"-sensor-helper", helperPath, "-list-sensors", "-samples", "3"}, &out); err != nil {
 		t.Fatalf("run list-sensors = %v", err)
 	}
-	output := append([]byte{}, out.Bytes()...)
+	output := out.Bytes()
 	if len(output) == 0 {
 		t.Fatal("list-sensors output empty")
 	}

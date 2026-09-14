@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,7 +36,26 @@ const (
 	videoRetryReset  = 30 * time.Minute
 	fallbackMessage  = "영상 출력 오류 · 정적 화면"
 	fallbackWaiting  = "PNG 정적 화면 전송 중 · 다음 영상 재시도 대기"
+	fallbackHeld     = "H264 재시도 한도 초과 · PNG 정적 화면 유지"
 )
+
+// DefaultTheme is the theme used when none is configured.
+const DefaultTheme = "smon-halloween"
+
+var themeOverlays = map[string]func(func() render.Dashboard) render.Overlay{
+	"azure-ribbon":   render.AzureOverlay,
+	"smon-halloween": render.HalloweenOverlay,
+}
+
+// Themes lists the supported theme IDs in sorted order.
+func Themes() []string {
+	ids := make([]string, 0, len(themeOverlays))
+	for id := range themeOverlays {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
 
 // DisplayOptions configures the product display loop.
 type DisplayOptions struct {
@@ -65,9 +85,7 @@ func (o DisplayOptions) Validate() error {
 	if !info.Mode().IsRegular() || info.Size() == 0 {
 		return fmt.Errorf("display background must be a non-empty regular file")
 	}
-	switch o.Theme {
-	case "azure-ribbon", "smon-halloween":
-	default:
+	if themeOverlays[o.Theme] == nil {
 		return fmt.Errorf("display theme %q is not supported", o.Theme)
 	}
 	if o.FlushTimeout <= 0 || o.FlushTimeout >= o.Timeout {
@@ -95,29 +113,34 @@ type displayUSB interface {
 	Close() error
 }
 
-type displayStream interface {
-	io.ReadCloser
-}
-
 type displayDeps struct {
 	open  func(context.Context, time.Duration, time.Duration) (displayUSB, error)
-	start func(context.Context, render.Options) (displayStream, error)
+	start func(context.Context, render.Options) (io.ReadCloser, error)
 	wait  func(context.Context, time.Duration) bool
 	now   func() time.Time
 }
 
 type displayBudget struct {
-	attempts       int
-	progressSince  time.Time
-	lastProgressAt time.Time
+	attempts      int
+	progressSince time.Time
 }
 
 var productionDisplayDeps = displayDeps{
 	open: func(ctx context.Context, timeout, flush time.Duration) (displayUSB, error) {
-		return turzx.OpenUSB(ctx, timeout, flush)
+		// Return an untyped nil on failure; a nil *turzx.USB inside the
+		// interface would pass a nil check and panic in Close.
+		device, err := turzx.OpenUSB(ctx, timeout, flush)
+		if err != nil {
+			return nil, err
+		}
+		return device, nil
 	},
-	start: func(ctx context.Context, options render.Options) (displayStream, error) {
-		return render.Start(ctx, options)
+	start: func(ctx context.Context, options render.Options) (io.ReadCloser, error) {
+		stream, err := render.Start(ctx, options)
+		if err != nil {
+			return nil, err
+		}
+		return stream, nil
 	},
 	wait: waitReconnect,
 	now:  time.Now,
@@ -130,9 +153,6 @@ func RunDisplay(ctx context.Context, opts DisplayOptions, dashboard func() rende
 }
 
 func runDisplay(ctx context.Context, opts DisplayOptions, dashboard func() render.Dashboard, onState func(DisplayState), deps displayDeps) error {
-	if ctx == nil {
-		return fmt.Errorf("display context is nil")
-	}
 	if deps.open == nil {
 		deps.open = productionDisplayDeps.open
 	}
@@ -152,214 +172,170 @@ func runDisplay(ctx context.Context, opts DisplayOptions, dashboard func() rende
 	if dashboard == nil {
 		dashboard = func() render.Dashboard { return render.Dashboard{} }
 	}
-	overlay := displayOverlay(opts.Theme, dashboard)
+	overlay := themeOverlays[opts.Theme](dashboard)
 	fallbackOverlay := render.FallbackOverlay(overlay, fallbackMessage)
 	state(onState, "starting", "표시 데몬 시작")
 
 	backoff := time.Second
 	budget := displayBudget{}
-	for {
-		if err := ctx.Err(); err != nil {
-			state(onState, "stopped", "표시 데몬 중지")
-			return nil
+	for ctx.Err() == nil {
+		err := runConnection(ctx, opts, overlay, fallbackOverlay, onState, deps, &budget, func() { backoff = time.Second })
+		if ctx.Err() != nil {
+			// Cancellation is the normal exit; only transport failures that
+			// happened alongside it are worth reporting.
+			if err = stripCancellation(err); err != nil {
+				state(onState, "error", err.Error())
+				return err
+			}
+			break
 		}
-		device, err := deps.open(ctx, opts.Timeout, opts.FlushTimeout)
-		if err == nil {
-			_, err = device.Sync(ctx)
-			if err != nil {
-				closeErr := device.Close()
-				if ctx.Err() != nil {
-					if cleanupErr := stripCancellation(errors.Join(err, closeErr)); cleanupErr != nil {
-						return cleanupErr
-					}
-					state(onState, "stopped", "표시 데몬 중지")
-					return nil
-				}
-				state(onState, "disconnected", joinMessage("USB 동기화 실패", err, closeErr))
-				if !deps.wait(ctx, backoff) {
-					state(onState, "stopped", "표시 데몬 중지")
-					return nil
-				}
-				backoff = nextBackoff(backoff)
-				continue
-			}
-			err = runConnected(ctx, opts, overlay, fallbackOverlay, device, onState, deps, &budget, func() { backoff = time.Second })
-			closeErr := device.Close()
-			if err == nil && closeErr == nil {
-				state(onState, "stopped", "표시 데몬 중지")
-				return nil
-			}
-			if ctx.Err() != nil {
-				if cleanupErr := stripCancellation(errors.Join(err, closeErr)); cleanupErr != nil {
-					state(onState, "error", cleanupErr.Error())
-					return cleanupErr
-				}
-				state(onState, "stopped", "표시 데몬 중지")
-				return nil
-			}
-			state(onState, "disconnected", joinMessage("표시 연결 끊김", err, closeErr))
-		} else {
-			var closeErr error
-			if device != nil {
-				closeErr = device.Close()
-			}
-			if ctx.Err() != nil {
-				if cleanupErr := stripCancellation(errors.Join(err, closeErr)); cleanupErr != nil {
-					return cleanupErr
-				}
-				state(onState, "stopped", "표시 데몬 중지")
-				return nil
-			}
-			state(onState, "disconnected", joinMessage("USB 열기 실패", err, closeErr))
+		message := "표시 연결 종료"
+		if err != nil {
+			message = err.Error()
 		}
+		state(onState, "disconnected", message)
 		if !deps.wait(ctx, backoff) {
-			state(onState, "stopped", "표시 데몬 중지")
-			return nil
+			break
 		}
-		backoff = nextBackoff(backoff)
+		backoff = min(backoff*2, 30*time.Second)
 	}
+	state(onState, "stopped", "표시 데몬 중지")
+	return nil
 }
 
+// runConnection opens the panel once and drives it until the connection is
+// lost or ctx ends. Every error already carries its UI prefix.
+func runConnection(ctx context.Context, opts DisplayOptions, overlay, fallbackOverlay render.Overlay, onState func(DisplayState), deps displayDeps, budget *displayBudget, markSuccess func()) error {
+	device, err := deps.open(ctx, opts.Timeout, opts.FlushTimeout)
+	if err != nil {
+		return fmt.Errorf("USB 열기 실패: %w", err)
+	}
+	if _, err := device.Sync(ctx); err != nil {
+		return fmt.Errorf("USB 동기화 실패: %w", errors.Join(err, device.Close()))
+	}
+	err = errors.Join(runConnected(ctx, opts, overlay, fallbackOverlay, device, onState, deps, budget, markSuccess), device.Close())
+	if err != nil {
+		return fmt.Errorf("표시 연결 끊김: %w", err)
+	}
+	return nil
+}
+
+// runConnected alternates video attempts and PNG fallback on a synced panel.
+// It returns nil when ctx ends and an error when the panel must be reopened.
 func runConnected(ctx context.Context, opts DisplayOptions, overlay, fallbackOverlay render.Overlay, device displayUSB, onState func(DisplayState), deps displayDeps, budget *displayBudget, markSuccess func()) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
+	for ctx.Err() == nil {
 		if budget.attempts > videoRetryLimit {
-			return runPNG(ctx, device, fallbackOverlay, onState, "H264 재시도 한도 초과 · PNG 정적 화면 유지", deps.now, markSuccess)
+			return runPNG(ctx, device, fallbackOverlay, onState, fallbackHeld, deps.now, markSuccess)
 		}
-		stream, startErr := deps.start(ctx, render.Options{
-			FFmpeg: opts.FFmpeg, Background: opts.Background, FrameRate: displayFrameRate,
-			Overlay: overlay, OverlayInterval: time.Second,
-		})
-		if startErr == nil {
-			if stream == nil {
-				startErr = fmt.Errorf("H264 renderer returned a nil stream")
-			}
+		videoErr, err := runVideo(ctx, opts, overlay, device, onState, deps, budget, markSuccess)
+		if err != nil || ctx.Err() != nil {
+			return err
 		}
-		if ctx.Err() != nil {
-			if stream != nil {
-				return stripCancellation(stream.Close())
-			}
-			return nil
-		}
-		if startErr == nil {
-			state(onState, "starting", "영상 전송 준비 중")
-			reportedVideo := false
-			report, sendErr := device.SendH264Stream(ctx, stream, turzx.VideoOptions{
-				FrameRate: displayFrameRate, Brightness: opts.Brightness, QueueTimeout: queueTimeout,
-				OnProgress: func(progress turzx.VideoProgress) {
-					at := progress.At
-					if at.IsZero() {
-						at = deps.now()
-					}
-					if budget.progressSince.IsZero() {
-						budget.progressSince = at
-					}
-					if !reportedVideo {
-						reportedVideo = true
-						state(onState, "video", "H264 영상 전송 중")
-					}
-					budget.lastProgressAt = at
-					if at.Sub(budget.progressSince) >= videoRetryReset {
-						budget.attempts = 0
-						budget.progressSince = at
-					}
-					markSuccess()
-				},
-			}, opts.ChunkWait)
-			closeErr := stream.Close()
-			videoErr := errors.Join(sendErr, report.StopError, closeErr)
-			if ctx.Err() != nil {
-				return errors.Join(stripCancellation(errors.Join(sendErr, closeErr)), report.StopError)
-			}
-			budget.progressSince = time.Time{}
-			budget.lastProgressAt = time.Time{}
-			budget.attempts++
-			if videoErr == nil {
-				videoErr = fmt.Errorf("H264 stream ended")
-			}
-			state(onState, "starting", fmt.Sprintf("PNG 정적 화면 준비 중 · %v", videoErr))
-			if _, syncErr := device.Sync(ctx); syncErr != nil {
-				return fmt.Errorf("resync after H264 failure: %w", syncErr)
-			}
-		} else {
-			state(onState, "starting", fmt.Sprintf("PNG 정적 화면 준비 중 · %v", startErr))
-			budget.attempts++
-		}
-
+		state(onState, "starting", fmt.Sprintf("PNG 정적 화면 준비 중 · %v", videoErr))
 		if budget.attempts > videoRetryLimit {
-			return runPNG(ctx, device, fallbackOverlay, onState, "H264 재시도 한도 초과 · PNG 정적 화면 유지", deps.now, markSuccess)
+			return runPNG(ctx, device, fallbackOverlay, onState, fallbackHeld, deps.now, markSuccess)
 		}
-		if err := runPNGUntil(ctx, device, fallbackOverlay, onState, time.Duration(1<<(budget.attempts-1))*time.Second, deps.now, deps.wait, markSuccess); err != nil {
-			if ctx.Err() != nil {
-				return stripCancellation(err)
-			}
-			state(onState, "error", fmt.Sprintf("PNG 정적 화면 전송 실패 · %v", err))
+		retryDelay := time.Duration(1<<(budget.attempts-1)) * time.Second
+		if err := runPNGUntil(ctx, device, fallbackOverlay, onState, retryDelay, deps.now, deps.wait, markSuccess); err != nil {
 			return err
 		}
 	}
+	return nil
 }
 
+// runVideo runs one H264 attempt. videoErr says why the video ended; err is a
+// panel failure that ends the connection. The retry budget is charged only
+// after the panel answers a resync, so a vanished device counts as a
+// reconnect rather than a video failure.
+func runVideo(ctx context.Context, opts DisplayOptions, overlay render.Overlay, device displayUSB, onState func(DisplayState), deps displayDeps, budget *displayBudget, markSuccess func()) (videoErr, err error) {
+	stream, startErr := deps.start(ctx, render.Options{
+		FFmpeg: opts.FFmpeg, Background: opts.Background, FrameRate: displayFrameRate,
+		Overlay: overlay, OverlayInterval: time.Second,
+	})
+	if startErr == nil && stream == nil {
+		startErr = errors.New("H264 renderer returned a nil stream")
+	}
+	if startErr != nil {
+		if ctx.Err() != nil {
+			return nil, startErr
+		}
+		budget.attempts++
+		return startErr, nil
+	}
+	if ctx.Err() != nil {
+		return nil, stream.Close()
+	}
+	state(onState, "starting", "영상 전송 준비 중")
+	reportedVideo := false
+	_, sendErr := device.SendH264Stream(ctx, stream, turzx.VideoOptions{
+		FrameRate: displayFrameRate, Brightness: opts.Brightness, QueueTimeout: queueTimeout,
+		OnProgress: func(turzx.VideoProgress) {
+			now := deps.now()
+			if budget.progressSince.IsZero() {
+				budget.progressSince = now
+			}
+			if !reportedVideo {
+				reportedVideo = true
+				state(onState, "video", "H264 영상 전송 중")
+			}
+			if now.Sub(budget.progressSince) >= videoRetryReset {
+				budget.attempts = 0
+				budget.progressSince = now
+			}
+			markSuccess()
+		},
+	}, opts.ChunkWait)
+	// The device already joins its stop error into sendErr; only the
+	// renderer's own exit needs adding here.
+	videoErr = errors.Join(sendErr, stream.Close())
+	budget.progressSince = time.Time{}
+	if ctx.Err() != nil {
+		return nil, videoErr
+	}
+	if videoErr == nil {
+		videoErr = errors.New("H264 stream ended")
+	}
+	if _, syncErr := device.Sync(ctx); syncErr != nil {
+		return nil, fmt.Errorf("resync after H264 failure: %w", errors.Join(videoErr, syncErr))
+	}
+	budget.attempts++
+	return videoErr, nil
+}
+
+// runPNGUntil sends the fallback PNG every second for duration.
 func runPNGUntil(ctx context.Context, device displayUSB, overlay render.Overlay, onState func(DisplayState), duration time.Duration, now func() time.Time, wait func(context.Context, time.Duration) bool, markSuccess func()) error {
-	if duration <= 0 {
-		return nil
-	}
 	started := now()
-	var counter uint64
-	if err := sendFallbackPNG(ctx, device, overlay, now().Sub(started), counter, markSuccess); err != nil {
-		if ctx.Err() != nil {
-			return stripCancellation(err)
-		}
-		return err
-	}
-	state(onState, "fallback", fallbackWaiting)
-	for {
-		remaining := duration - now().Sub(started)
-		if remaining <= 0 {
-			return nil
-		}
-		step := remaining
-		if step > time.Second {
-			step = time.Second
-		}
-		if !wait(ctx, step) {
-			return nil
-		}
-		counter++
+	for counter := uint64(0); duration > 0; counter++ {
 		if err := sendFallbackPNG(ctx, device, overlay, now().Sub(started), counter, markSuccess); err != nil {
-			if ctx.Err() != nil {
-				return stripCancellation(err)
-			}
-			state(onState, "error", fmt.Sprintf("PNG 정적 화면 전송 실패 · %v", err))
 			return err
 		}
+		if counter == 0 {
+			state(onState, "fallback", fallbackWaiting)
+		}
+		remaining := duration - now().Sub(started)
+		if remaining <= 0 || !wait(ctx, min(remaining, time.Second)) {
+			return nil
+		}
 	}
+	return nil
 }
 
+// runPNG holds the fallback PNG until ctx ends or the panel fails.
 func runPNG(ctx context.Context, device displayUSB, overlay render.Overlay, onState func(DisplayState), message string, now func() time.Time, markSuccess func()) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	started := now()
-	var counter uint64
-	reportedFallback := false
-	for {
+	for counter := uint64(0); ; counter++ {
 		if err := sendFallbackPNG(ctx, device, overlay, now().Sub(started), counter, markSuccess); err != nil {
-			if ctx.Err() != nil {
-				return stripCancellation(err)
-			}
-			state(onState, "error", fmt.Sprintf("PNG 정적 화면 전송 실패 · %v", err))
 			return err
 		}
-		if !reportedFallback {
+		if counter == 0 {
 			state(onState, "fallback", message)
-			reportedFallback = true
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			counter++
 		}
 	}
 }
@@ -387,24 +363,16 @@ func fallbackPNG(data []byte, err error) ([]byte, error) {
 	landscape := image.NewNRGBA(image.Rect(0, 0, landscapeWidth, landscapeHeight))
 	draw.Draw(landscape, landscape.Bounds(), image.NewUniform(color.NRGBA{R: 8, G: 8, B: 14, A: 255}), image.Point{}, draw.Src)
 	draw.Draw(landscape, landscape.Bounds(), overlay, overlay.Bounds().Min, draw.Over)
+	// Rotate clockwise: landscape (x, y) lands at portrait (H-1-y, x).
 	portrait := image.NewNRGBA(image.Rect(0, 0, nativeWidth, nativeHeight))
 	for y := 0; y < landscapeHeight; y++ {
 		for x := 0; x < landscapeWidth; x++ {
-			portrait.Set(landscapeHeight-1-y, x, landscape.At(x, y))
+			src := landscape.PixOffset(x, y)
+			dst := portrait.PixOffset(landscapeHeight-1-y, x)
+			copy(portrait.Pix[dst:dst+4], landscape.Pix[src:src+4])
 		}
 	}
 	return turzx.EncodePNG(portrait)
-}
-
-func displayOverlay(theme string, dashboard func() render.Dashboard) render.Overlay {
-	switch theme {
-	case "azure-ribbon":
-		return render.AzureOverlay(dashboard)
-	case "smon-halloween":
-		return render.HalloweenOverlay(dashboard)
-	default:
-		return func(time.Duration, uint64) ([]byte, error) { return nil, fmt.Errorf("unsupported theme %q", theme) }
-	}
 }
 
 func state(onState func(DisplayState), status, message string) {
@@ -424,24 +392,8 @@ func waitReconnect(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-func nextBackoff(delay time.Duration) time.Duration {
-	if delay >= 30*time.Second {
-		return 30 * time.Second
-	}
-	if delay > 15*time.Second {
-		return 30 * time.Second
-	}
-	return delay * 2
-}
-
-func joinMessage(prefix string, errs ...error) string {
-	joined := errors.Join(errs...)
-	if joined == nil {
-		return prefix
-	}
-	return fmt.Sprintf("%s: %v", prefix, joined)
-}
-
+// stripCancellation removes context and USB cancellation errors from err,
+// keeping wrapper context around whatever transport error remains.
 func stripCancellation(err error) error {
 	if err == nil {
 		return nil
@@ -456,11 +408,16 @@ func stripCancellation(err error) error {
 		return errors.Join(kept...)
 	}
 	if one, ok := err.(interface{ Unwrap() error }); ok {
-		child := stripCancellation(one.Unwrap())
-		if child == nil {
+		inner := one.Unwrap()
+		child := stripCancellation(inner)
+		switch {
+		case child == nil:
 			return nil
+		case child == inner:
+			return err
+		default:
+			return child
 		}
-		return child
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, gousb.TransferCancelled) {
 		return nil

@@ -41,7 +41,7 @@ func codexObservation(window codex.Window, receivedAt time.Time) Observation {
 }
 
 // ClaudeUpdate converts one newly received statusline envelope. Claude does
-// not provide a source observation timestamp, so SourceObservedAt stays nil.
+// not report when it observed the value, so receivedAt is the only timestamp.
 func ClaudeUpdate(scope Scope, envelope claude.Envelope, receivedAt, now time.Time) (Update, error) {
 	if err := validateScope(scope, "claude"); err != nil {
 		return Update{}, err

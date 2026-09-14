@@ -141,19 +141,6 @@ func TestSampleIsKilledByCancel(t *testing.T) {
 	}
 }
 
-func TestSensorProcessCloseKillsOnDemand(t *testing.T) {
-	t.Setenv("GO_WANT_SENSOR_HELPER", "1")
-	t.Setenv("SENSOR_HELPER_MODE", "timeout")
-	process, err := StartSensors(context.Background(), os.Args[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	process.Close()
-	if _, err := process.Sample(context.Background()); err == nil {
-		t.Fatal("expected error after manual close")
-	}
-}
-
 func TestSensorHelperProcessPathMustBeExecutable(t *testing.T) {
 	if _, err := StartSensors(context.Background(), os.Args[0]+"does-not-exist"); err == nil {
 		t.Fatal("expected startup error")

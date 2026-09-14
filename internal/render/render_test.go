@@ -144,11 +144,8 @@ func TestDiagnosticOverlay(t *testing.T) {
 	if got := img.Bounds().Size(); got.X != landscapeWidth || got.Y != landscapeHeight {
 		t.Fatalf("overlay size = %v", got)
 	}
-	if alpha := img.At(0, 0); alpha != nil {
-		_, _, _, a := alpha.RGBA()
-		if a != 0 {
-			t.Fatalf("background alpha = %d, want 0", a)
-		}
+	if _, _, _, a := img.At(0, 0).RGBA(); a != 0 {
+		t.Fatalf("background alpha = %d, want 0", a)
 	}
 }
 

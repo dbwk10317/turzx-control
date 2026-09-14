@@ -70,8 +70,8 @@ func StartLogin(ctx context.Context, executable, configDir string) (*LoginSessio
 		cancel()
 		return nil, fmt.Errorf("start Claude login: %w", err)
 	}
-	go drainBounded(stdout)
-	go drainBounded(stderr)
+	go func() { _, _ = io.Copy(io.Discard, stdout) }()
+	go func() { _, _ = io.Copy(io.Discard, stderr) }()
 	s := &LoginSession{cmd: cmd, executable: executable, configDir: dir, cancel: cancel, done: make(chan struct{})}
 	go func() { s.procMu.Lock(); s.procErr = cmd.Wait(); s.procMu.Unlock(); close(s.done) }()
 	return s, nil
@@ -98,14 +98,7 @@ func (s *LoginSession) Wait(ctx context.Context) error {
 		case <-ctx.Done():
 			s.cancel()
 			<-s.done
-			s.procMu.Lock()
-			err := s.procErr
-			s.procMu.Unlock()
-			if ctx.Err() != nil {
-				s.waitErr = ctx.Err()
-			} else if err != nil {
-				s.waitErr = err
-			}
+			s.waitErr = ctx.Err()
 			return
 		}
 		s.waitErr = verifyLogin(ctx, s.executable, s.configDir)
@@ -120,41 +113,41 @@ func (s *LoginSession) Close() {
 	}
 	s.cancel()
 	<-s.done
-	s.procMu.Lock()
-	err := s.procErr
-	s.procMu.Unlock()
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return
-		}
-	}
 }
 
 func verifyLogin(ctx context.Context, executable, configDir string) error {
+	loggedIn, err := authStatus(ctx, executable, configDir)
+	if err == nil && !loggedIn {
+		err = errors.New("Claude auth status: loggedIn is false")
+	}
+	return err
+}
+
+func verifyLoggedOut(ctx context.Context, executable, configDir string) error {
+	loggedIn, err := authStatus(ctx, executable, configDir)
+	if err == nil && loggedIn {
+		err = errors.New("Claude auth status: loggedIn is true")
+	}
+	return err
+}
+
+// authStatus asks the official CLI whether the dedicated profile is logged in.
+func authStatus(ctx context.Context, executable, configDir string) (bool, error) {
 	cmd := exec.CommandContext(ctx, executable, "auth", "status", "--json")
 	cmd.Env = replaceConfigDir(os.Environ(), configDir)
 	configureProfileProcess(cmd)
-	var out, errOut boundedBuffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
+	out, errOut := &HeadBuffer{Max: profileOutputLimit}, &HeadBuffer{Max: profileOutputLimit}
+	cmd.Stdout, cmd.Stderr = out, errOut
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Claude auth status: %w", err)
+		return false, fmt.Errorf("Claude auth status: %w", err)
 	}
 	var status struct {
 		LoggedIn bool `json:"loggedIn"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(out.Bytes()))
-	if err := dec.Decode(&status); err != nil {
-		return fmt.Errorf("Claude auth status JSON: %w", err)
+	if err := decodeStrict(json.NewDecoder(bytes.NewReader(out.Bytes())), &status); err != nil {
+		return false, fmt.Errorf("Claude auth status JSON: %w", err)
 	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return errors.New("Claude auth status: trailing JSON")
-	}
-	if !status.LoggedIn {
-		return errors.New("Claude auth status: loggedIn is false")
-	}
-	return nil
+	return status.LoggedIn, nil
 }
 
 // Logout revokes the dedicated Claude profile and verifies it is logged out.
@@ -172,8 +165,7 @@ func Logout(ctx context.Context, executable, configDir string) error {
 	cmd := exec.CommandContext(ctx, executable, "auth", "logout")
 	cmd.Env = replaceConfigDir(os.Environ(), dir)
 	configureProfileProcess(cmd)
-	var out, errOut boundedBuffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	runErr := cmd.Run()
 	if err := verifyLoggedOut(ctx, executable, dir); err == nil {
 		return nil
@@ -183,47 +175,25 @@ func Logout(ctx context.Context, executable, configDir string) error {
 	return fmt.Errorf("Claude logout: %w", runErr)
 }
 
-func verifyLoggedOut(ctx context.Context, executable, configDir string) error {
-	cmd := exec.CommandContext(ctx, executable, "auth", "status", "--json")
-	cmd.Env = replaceConfigDir(os.Environ(), configDir)
-	configureProfileProcess(cmd)
-	var out, errOut boundedBuffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Claude auth status: %w", err)
-	}
-	var status struct {
-		LoggedIn bool `json:"loggedIn"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(out.Bytes()))
-	if err := dec.Decode(&status); err != nil {
-		return fmt.Errorf("Claude auth status JSON: %w", err)
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return errors.New("Claude auth status: trailing JSON")
-	}
-	if status.LoggedIn {
-		return errors.New("Claude auth status: loggedIn is true")
-	}
-	return nil
+// HeadBuffer keeps the first Max bytes written and reports the rest as
+// written, so a chatty child process never blocks or grows memory.
+type HeadBuffer struct {
+	Max int
+	buf bytes.Buffer
 }
 
-type boundedBuffer struct{ b bytes.Buffer }
-
-func (b *boundedBuffer) Write(p []byte) (int, error) {
+func (b *HeadBuffer) Write(p []byte) (int, error) {
 	n := len(p)
-	if b.b.Len() < profileOutputLimit {
-		keep := profileOutputLimit - b.b.Len()
+	if keep := b.Max - b.buf.Len(); keep > 0 {
 		if len(p) > keep {
 			p = p[:keep]
 		}
-		_, _ = b.b.Write(p)
+		b.buf.Write(p)
 	}
 	return n, nil
 }
-func (b *boundedBuffer) Bytes() []byte { return b.b.Bytes() }
-func drainBounded(r io.Reader)         { var b boundedBuffer; _, _ = io.Copy(&b, r) }
+func (b *HeadBuffer) Bytes() []byte { return b.buf.Bytes() }
+func (b *HeadBuffer) Len() int      { return b.buf.Len() }
 
 func absoluteDir(value, name string) (string, error) {
 	if strings.TrimSpace(value) == "" {
@@ -414,12 +384,7 @@ func readManagedStatuslineFile(path string) (managedStatusline, error) {
 		return managedStatusline{}, errors.New("statusline sidecar too large")
 	}
 	var side managedStatusline
-	dec := json.NewDecoder(bytes.NewReader(b))
-	if err := dec.Decode(&side); err != nil {
-		return managedStatusline{}, errors.New("invalid statusline sidecar")
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := decodeStrict(json.NewDecoder(bytes.NewReader(b)), &side); err != nil {
 		return managedStatusline{}, errors.New("invalid statusline sidecar")
 	}
 	return side, nil
@@ -438,17 +403,12 @@ func readSettings(path string) (map[string]json.RawMessage, error) {
 	if len(b) > profileJSONLimit {
 		return nil, errors.New("settings.json too large")
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
 	var m map[string]json.RawMessage
-	if err := dec.Decode(&m); err != nil {
+	if err := decodeStrict(json.NewDecoder(bytes.NewReader(b)), &m); err != nil {
 		return nil, fmt.Errorf("settings.json: %w", err)
 	}
 	if m == nil {
 		return nil, errors.New("settings.json must be a JSON object")
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return nil, errors.New("settings.json trailing JSON")
 	}
 	return m, nil
 }

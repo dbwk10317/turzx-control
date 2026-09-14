@@ -61,6 +61,19 @@ type rawStatusline struct {
 	} `json:"rate_limits"`
 }
 
+var errTrailingJSON = errors.New("trailing JSON")
+
+// decodeStrict decodes exactly one JSON value; anything after it is an error.
+func decodeStrict(dec *json.Decoder, v any) error {
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errTrailingJSON
+	}
+	return nil
+}
+
 func ParseStatusline(data []byte) (Statusline, error) {
 	if len(data) == 0 || len(data) > MaxJSONSize {
 		return Statusline{}, errors.New("invalid statusline size")
@@ -68,12 +81,8 @@ func ParseStatusline(data []byte) (Statusline, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	var raw rawStatusline
-	if err := dec.Decode(&raw); err != nil {
+	if err := decodeStrict(dec, &raw); err != nil {
 		return Statusline{}, fmt.Errorf("statusline JSON: %w", err)
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return Statusline{}, errors.New("trailing JSON")
 	}
 	if err := validID(raw.SessionID, "session_id"); err != nil {
 		return Statusline{}, err
@@ -130,9 +139,8 @@ func validID(value, name string) error {
 	return nil
 }
 
-// Store writes one envelope per session. A process-independent lock protects
-// sequence allocation; the lock is deliberately coarse because statusline
-// writes are infrequent (ponytail: use per-session locks if throughput grows).
+// Store writes one envelope per session. A per-session, process-independent
+// lock file protects sequence allocation.
 type Store struct {
 	dir, binding string
 }
@@ -147,9 +155,17 @@ func NewStore(dir, bindingID string) (*Store, error) {
 	return &Store{dir: dir, binding: bindingID}, nil
 }
 
+// Write records status under the store's binding. A statusline without
+// rate_limits (session start, API-key users) is not an observation and is
+// skipped so it cannot mark other sessions' values stale. A session file
+// written by an earlier binding is never taken over: after a reconnect only
+// new Claude sessions report, as AGENTS.md requires.
 func (s *Store) Write(status Statusline) (Envelope, error) {
 	if err := validID(status.SessionID, "session_id"); err != nil {
 		return Envelope{}, err
+	}
+	if status.FiveHour == nil && status.SevenDay == nil {
+		return Envelope{}, nil
 	}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return Envelope{}, err
@@ -194,35 +210,18 @@ func readEnvelope(path string) (Envelope, error) {
 		return Envelope{}, errors.New("envelope too large")
 	}
 	var e Envelope
-	dec := json.NewDecoder(bytes.NewReader(b))
-	if err := dec.Decode(&e); err != nil {
-		return Envelope{}, err
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return Envelope{}, errors.New("trailing envelope JSON")
+	if err := decodeStrict(json.NewDecoder(bytes.NewReader(b)), &e); err != nil {
+		return Envelope{}, fmt.Errorf("envelope JSON: %w", err)
 	}
 	if e.SchemaVersion != SchemaVersion || validID(e.BindingID, "binding_id") != nil || validID(e.SessionID, "session_id") != nil || e.Sequence == 0 {
 		return Envelope{}, errors.New("invalid envelope")
 	}
-	if e.FiveHour != nil {
-		if err := validateWindow(e.FiveHour); err != nil {
-			return Envelope{}, err
-		}
-	}
-	if e.Weekly != nil {
-		if err := validateWindow(e.Weekly); err != nil {
-			return Envelope{}, err
+	for _, w := range []*Window{e.FiveHour, e.Weekly} {
+		if w != nil && (math.IsNaN(w.UsedPercentage) || math.IsInf(w.UsedPercentage, 0) || w.UsedPercentage < 0 || w.ResetsAt <= 0) {
+			return Envelope{}, errors.New("invalid rate limit window")
 		}
 	}
 	return e, nil
-}
-
-func validateWindow(w *Window) error {
-	if w == nil || math.IsNaN(w.UsedPercentage) || math.IsInf(w.UsedPercentage, 0) || w.UsedPercentage < 0 || w.ResetsAt <= 0 {
-		return errors.New("invalid rate limit window")
-	}
-	return nil
 }
 
 func acquireLock(path string) (*os.File, error) {
@@ -249,6 +248,7 @@ func acquireLock(path string) (*os.File, error) {
 }
 func releaseLock(f *os.File) { _ = unlockFile(f); _ = f.Close() }
 
+// Receiver watches one session file and reports strictly newer sequences.
 type Receiver struct {
 	path, binding string
 	seen          map[string]uint64
@@ -264,32 +264,22 @@ func NewReceiver(path, expectedBinding string) (*Receiver, error) {
 
 // Observe returns fresh only for a strictly newer sequence. The first valid
 // envelope establishes a baseline and is intentionally not reported fresh.
-func (r *Receiver) Observe() (Envelope, bool, error) {
+// Unreadable, malformed, and foreign-binding files read as no envelope.
+func (r *Receiver) Observe() (Envelope, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, err := readEnvelope(r.path)
-	if err != nil {
-		return Envelope{}, false, nil
-	}
-	if e.BindingID != r.binding {
-		return Envelope{}, false, nil
+	if err != nil || e.BindingID != r.binding {
+		return Envelope{}, false
 	}
 	last, ok := r.seen[e.SessionID]
 	if !ok {
 		r.seen[e.SessionID] = e.Sequence
-		return e, false, nil
+		return e, false
 	}
 	if e.Sequence <= last {
-		return e, false, nil
+		return e, false
 	}
 	r.seen[e.SessionID] = e.Sequence
-	return e, true, nil
-}
-
-// Observer is kept as the descriptive name for callers that treat the inbox
-// as an observation source; it has the same deliberately small API as Receiver.
-type Observer = Receiver
-
-func NewObserver(path, expectedBinding string) (*Observer, error) {
-	return NewReceiver(path, expectedBinding)
+	return e, true
 }

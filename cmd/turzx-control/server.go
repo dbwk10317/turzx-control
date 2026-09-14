@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,18 +25,17 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-type loginSession interface {
-	AuthURL() string
-	Wait(context.Context) error
-	Close()
-}
-
-type loginStarter func(context.Context, string, string) (loginSession, error)
-
 type claudeLoginSession interface {
 	Wait(context.Context) error
 	Close()
 }
+
+type loginSession interface {
+	claudeLoginSession
+	AuthURL() string
+}
+
+type loginStarter func(context.Context, string, string) (loginSession, error)
 
 type claudeLoginStarter func(context.Context, string, string) (claudeLoginSession, error)
 type claudeStatusInstaller func(string, string, string, string) error
@@ -132,6 +130,10 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid host", http.StatusBadRequest)
 		return
 	}
+	if r.Method == http.MethodPost && !a.validMutation(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -141,28 +143,12 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/state":
 		a.writeState(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/codex/login":
-		if !a.validMutation(r) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
 		a.startCodexLogin(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/claude/login":
-		if !a.validMutation(r) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
 		a.startClaudeLogin(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/codex/logout":
-		if !a.validMutation(r) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
 		a.startLogout(w, "codex")
 	case r.Method == http.MethodPost && r.URL.Path == "/api/claude/logout":
-		if !a.validMutation(r) {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
 		a.startLogout(w, "claude")
 	case r.Method == http.MethodGet && (r.URL.Path == "/style.css" || r.URL.Path == "/app.js"):
 		a.static.ServeHTTP(w, r)
@@ -199,7 +185,11 @@ func (a *app) startLogout(w http.ResponseWriter, provider string) {
 
 	if err := a.stopProvider(provider); err != nil {
 		log.Printf("stop %s collection: %v", provider, err)
-		a.setClaudeState("error", "저장된 연결을 해제하지 못했습니다. 진단 로그를 확인해 주세요.")
+		setState := a.setState
+		if provider == "claude" {
+			setState = a.setClaudeState
+		}
+		setState("error", "저장된 연결을 해제하지 못했습니다. 진단 로그를 확인해 주세요.")
 		http.Error(w, "connection state unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -316,17 +306,17 @@ func (a *app) waitForLogin(session loginSession) {
 		return
 	}
 	closeSession()
-	// startCodexLogin already joined the old collector. Keep this transition
-	// locked until the new run is installed, before allowing another login.
+	// Publish the state first, then start the collector outside a.mu: the
+	// collector reports through observedCodex, which takes a.mu itself.
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.stopping || a.ctx.Err() != nil {
-		return
+	stopping := a.stopping || a.ctx.Err() != nil
+	if !stopping {
+		a.status, a.message = "connected", "전용 Codex 프로필이 연결되었습니다."
 	}
-	if a.sources != nil {
+	a.mu.Unlock()
+	if !stopping && a.sources != nil {
 		a.sources.SetCodex(true)
 	}
-	a.status, a.message = "connected", "전용 Codex 프로필이 연결되었습니다."
 }
 
 func (a *app) waitForClaudeLogin(session claudeLoginSession, binding string) {
@@ -386,5 +376,5 @@ func sessionToken() (string, error) {
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
-	return strings.TrimRight(base64.RawURLEncoding.EncodeToString(value), "="), nil
+	return base64.RawURLEncoding.EncodeToString(value), nil
 }

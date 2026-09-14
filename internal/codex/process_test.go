@@ -230,24 +230,28 @@ func TestMissingPlanDoesNotHideIdentifiedAccount(t *testing.T) {
 	}
 }
 
-func TestReadCancelAndOversize(t *testing.T) {
-	withFake(t, "hang")
+func TestReadTimeoutLeavesProcessUsable(t *testing.T) {
+	withFake(t, "hang-once")
 	p, err := Start(context.Background(), os.Args[0], t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer p.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := p.Read(ctx, "codex"); err == nil {
-		t.Fatal("expected read timeout")
+	if _, err := p.Read(ctx, "codex"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Read() error = %v, want deadline", err)
 	}
-	p.Close()
+	// The request was abandoned, not the child: the next read must succeed.
+	if _, err := p.Read(context.Background(), "codex"); err != nil {
+		t.Fatalf("Read() after timeout = %v", err)
+	}
+}
 
-	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+func TestOversizeResponseIsInvalid(t *testing.T) {
 	withFake(t, "oversize")
-	if _, err := Start(ctx, os.Args[0], t.TempDir()); err == nil {
-		t.Fatal("expected oversized response error")
+	if _, err := Start(context.Background(), os.Args[0], t.TempDir()); !errors.Is(err, errInvalidResponse) {
+		t.Fatalf("Start() error = %v, want invalid response", err)
 	}
 }
 
@@ -359,7 +363,7 @@ func fakeServer() {
 				_ = out.Encode(map[string]any{"id": req.ID, "error": map[string]any{"code": "not_authenticated", "message": "not logged in"}})
 				continue
 			}
-			if scenario == "hang" && accountReads > 1 {
+			if scenario == "hang" && accountReads > 1 || scenario == "hang-once" && accountReads == 2 {
 				continue
 			}
 			if scenario == "null-account" {
@@ -437,5 +441,17 @@ func TestStartRejectsEmptyInputs(t *testing.T) {
 	}
 	if _, err := Start(context.Background(), os.Args[0], "relative-home"); err == nil {
 		t.Fatal("relative home accepted")
+	}
+}
+
+func TestParseAccountSeparatesProtocolFromIdentity(t *testing.T) {
+	if _, err := parseAccount(json.RawMessage(`not json`)); !errors.Is(err, errInvalidResponse) || IsAuthRequired(err) {
+		t.Fatalf("malformed account/read = %v, want protocol error", err)
+	}
+	if _, err := parseAccount(json.RawMessage(`{"account":null}`)); !IsAuthRequired(err) {
+		t.Fatalf("null account = %v, want auth required", err)
+	}
+	if _, err := parseAccount(json.RawMessage(`{"account":{"type":"apikey"}}`)); !IsAuthRequired(err) {
+		t.Fatalf("non-chatgpt account = %v, want auth required", err)
 	}
 }

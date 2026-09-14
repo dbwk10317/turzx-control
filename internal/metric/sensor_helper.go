@@ -38,7 +38,6 @@ type HelperSensor struct {
 	Type         string   `json:"type"`
 	Value        *float64 `json:"value"`
 	State        string   `json:"state"`
-	ObservedAt   string   `json:"observed_at"`
 }
 
 // SensorProcess owns one child and serializes its request/response stream.
@@ -240,10 +239,8 @@ func (p *SensorProcess) Sample(ctx context.Context) (snapshot HelperSnapshot, er
 }
 
 func parseHelperSnapshot(line, stderr string) (HelperSnapshot, error) {
+	// Size is bounded by the callers: the scanner buffer and the file reader.
 	var snapshot HelperSnapshot
-	if len(line) > maxResponseBytes {
-		return snapshot, errors.New("sensor helper response exceeds 2 MiB")
-	}
 	if err := json.Unmarshal([]byte(line), &snapshot); err != nil {
 		return snapshot, fmt.Errorf("parse helper response: %w", err)
 	}

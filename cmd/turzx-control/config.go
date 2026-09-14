@@ -75,9 +75,6 @@ func saveSettings(path string, value settings) error {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	defer tmp.Close()
-	if err = tmp.Chmod(0o600); err != nil {
-		return fmt.Errorf("change settings temporary file mode: %w", err)
-	}
 	if _, err = tmp.Write(data); err == nil {
 		err = tmp.Sync()
 	}

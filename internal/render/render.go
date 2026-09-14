@@ -3,7 +3,7 @@
 // FFmpeg invocation follows the official FFmpeg command and filter documentation;
 // no FFmpeg source code is copied.
 
-// Package render produces the live H264 stream used by the G1 diagnostic and theme preview.
+// Package render produces the panel's live H264 stream and theme overlays.
 package render
 
 import (
@@ -41,9 +41,9 @@ const (
 
 var errClosed = errors.New("render stream closed")
 
-// Options configures the G1 FFmpeg producer. OnOverlay runs synchronously when
-// a new overlay is selected, initially at counter zero, and must
-// return promptly so it cannot hold up frame delivery or shutdown.
+// Options configures the FFmpeg producer. OnOverlay runs on the feed goroutine
+// when a new overlay is selected, initially at counter zero, and must return
+// promptly so it cannot hold up frame delivery or shutdown.
 type Options struct {
 	FFmpeg     string
 	Background string
@@ -271,6 +271,9 @@ func (s *Stream) Close() error {
 	return err
 }
 
+// feed paces frames into FFmpeg. Overlays render on their own goroutine so a
+// slow render never starves the frame clock; the previous frame repeats until
+// the new one is ready. os.ErrClosed means Close already owns the shutdown.
 func (s *Stream) feed(frame []byte, frameRate int, overlay Overlay, interval time.Duration, onOverlay func(time.Time, uint64)) {
 	defer s.workers.Done()
 	defer close(s.feedErr)
@@ -281,11 +284,20 @@ func (s *Stream) feed(frame []byte, frameRate int, overlay Overlay, interval tim
 	if onOverlay != nil {
 		onOverlay(started, counter)
 	}
-	if err := writeAll(s.stdin, frame); err != nil {
-		s.feedErr <- fmt.Errorf("feed initial overlay: %w", err)
+	if _, err := s.stdin.Write(frame); err != nil {
+		if !errors.Is(err, os.ErrClosed) {
+			s.feedErr <- fmt.Errorf("feed initial overlay: %w", err)
+		}
 		return
 	}
 
+	type rendered struct {
+		frame   []byte
+		err     error
+		at      time.Time
+		counter uint64
+	}
+	var next chan rendered
 	ticker := time.NewTicker(time.Second / time.Duration(frameRate))
 	defer ticker.Stop()
 	for {
@@ -293,26 +305,41 @@ func (s *Stream) feed(frame []byte, frameRate int, overlay Overlay, interval tim
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			now := time.Now()
-			if now.Sub(lastOverlay) >= interval {
-				counter++
-				var err error
-				frame, err = overlay(now.Sub(started), counter)
-				if err != nil {
-					s.feedErr <- fmt.Errorf("make overlay: %w", err)
-					s.cancel(err)
+		}
+		now := time.Now()
+		if next == nil && now.Sub(lastOverlay) >= interval {
+			counter++
+			ch := make(chan rendered, 1)
+			next = ch
+			s.workers.Add(1)
+			go func(elapsed time.Duration, counter uint64) {
+				defer s.workers.Done()
+				frame, err := overlay(elapsed, counter)
+				ch <- rendered{frame: frame, err: err, at: now, counter: counter}
+			}(now.Sub(started), counter)
+		}
+		if next != nil {
+			select {
+			case r := <-next:
+				next = nil
+				if r.err != nil {
+					s.feedErr <- fmt.Errorf("make overlay: %w", r.err)
+					s.cancel(r.err)
 					return
 				}
-				lastOverlay = now
+				frame, lastOverlay = r.frame, r.at
 				if onOverlay != nil {
-					onOverlay(now, counter)
+					onOverlay(r.at, r.counter)
 				}
+			default:
 			}
-			if err := writeAll(s.stdin, frame); err != nil {
+		}
+		if _, err := s.stdin.Write(frame); err != nil {
+			if !errors.Is(err, os.ErrClosed) {
 				s.feedErr <- fmt.Errorf("feed overlay: %w", err)
 				s.cancel(err)
-				return
 			}
+			return
 		}
 	}
 }
@@ -361,20 +388,6 @@ func drawScaledText(dst draw.Image, at image.Point, text string, scale int) {
 func formatElapsed(d time.Duration) string {
 	total := int64(d / time.Second)
 	return fmt.Sprintf("%02d:%02d:%02d", total/3600, total/60%60, total%60)
-}
-
-func writeAll(w io.Writer, p []byte) error {
-	for len(p) > 0 {
-		n, err := w.Write(p)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		p = p[n:]
-	}
-	return nil
 }
 
 type tailBuffer struct {

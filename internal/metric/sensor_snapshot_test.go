@@ -3,8 +3,10 @@
 package metric
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +27,7 @@ func TestReadSensorSnapshotValidation(t *testing.T) {
 			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := readSensorSnapshotFixture(path, now)
+			_, err := readSensorSnapshotContents(path, now, true)
 			if name == "valid" && err != nil {
 				t.Fatal(err)
 			}
@@ -41,14 +43,32 @@ func TestReadSensorSnapshotBoundsAndRegularFile(t *testing.T) {
 	if err := os.WriteFile(path, make([]byte, maxResponseBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSensorSnapshotFixture(path, time.Now()); err == nil {
+	if _, err := readSensorSnapshotContents(path, time.Now(), true); err == nil {
 		t.Fatal("expected size error")
 	}
 	dir := filepath.Join(t.TempDir(), "directory")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSensorSnapshotFixture(dir, time.Now()); err == nil {
-		t.Fatal("expected regular file error")
+	// Only the trusted Windows open path checks the file kind; the fixture
+	// path would fail later for the wrong reason.
+	if runtime.GOOS == "windows" {
+		if _, err := openSnapshotFileForRead(dir, false); err == nil {
+			t.Fatal("expected regular file error")
+		}
+	}
+}
+
+// Only Windows can vouch for the snapshot; every other OS refuses the trusted path.
+func TestReadSensorSnapshotUnsupportedOutsideWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("trusted path exists on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := os.WriteFile(path, []byte(`{"protocol_version":1,"observed_at":"2026-09-14T00:59:55Z","elevated":true,"sensors":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSensorSnapshot(path, time.Now()); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("ReadSensorSnapshot() error = %v, want ErrUnsupported", err)
 	}
 }

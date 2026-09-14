@@ -41,11 +41,14 @@ func TestRunWritesOnlyAllowedFieldsAndIncrementsSequence(t *testing.T) {
 	}
 }
 
-func TestRunRecordsMissingRateLimits(t *testing.T) {
+func TestRunSkipsMissingRateLimits(t *testing.T) {
 	dir := t.TempDir()
 	err := run(context.Background(), []string{"-inbox-dir", dir, "-binding-id", "binding-1"}, strings.NewReader(`{"session_id":"session-1"}`), io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "session-1.json")); !os.IsNotExist(err) {
+		t.Fatalf("stat = %v, want no envelope for a statusline without rate limits", err)
 	}
 }
 
@@ -90,9 +93,15 @@ func TestRunForwardsInputLargerThanCollectionLimit(t *testing.T) {
 		return err
 	}
 	input := strings.Repeat("x", claude.MaxJSONSize+1024)
-	err := run(context.Background(), []string{"-inbox-dir", t.TempDir(), "-binding-id", "binding-1", "-forward-command", "existing command"}, strings.NewReader(input), io.Discard, io.Discard)
-	if err == nil {
-		t.Fatal("oversize collection input accepted")
+	var errorOutput bytes.Buffer
+	err := run(context.Background(), []string{"-inbox-dir", t.TempDir(), "-binding-id", "binding-1", "-forward-command", "existing command"}, strings.NewReader(input), io.Discard, &errorOutput)
+	// The forwarded statusline succeeded, so the adapter exits cleanly and
+	// only reports the inbox failure.
+	if err != nil {
+		t.Fatalf("run() = %v, want nil when the forward succeeded", err)
+	}
+	if !strings.Contains(errorOutput.String(), "write Claude inbox") {
+		t.Fatalf("stderr = %q, want inbox error", errorOutput.String())
 	}
 	if forwarded != len(input) {
 		t.Fatalf("forwarded %d of %d bytes", forwarded, len(input))

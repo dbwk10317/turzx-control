@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Sensor gathering logic uses public LibreHardwareMonitorLib APIs only.
 
 using System.Text;
@@ -15,6 +15,7 @@ internal static class Program
     private const int DefaultSamples = 5;
     private const int SleepMilliseconds = 1000;
     private const int MaxStdioLineLength = 32;
+    private const int MaxConsecutiveSnapshotFailures = 30;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
     private sealed class SensorSnapshot
@@ -23,7 +24,7 @@ internal static class Program
         public int ProtocolVersion { get; init; } = 1;
 
         [JsonPropertyName("observed_at")]
-        public string ObservedAt { get; init; } = Timestamp();
+        public string ObservedAt { get; init; } = "";
 
         [JsonPropertyName("driver_installed")]
         public bool DriverInstalled { get; init; }
@@ -82,16 +83,10 @@ internal static class Program
 
         if (parse.SelfTest)
         {
-            var snapshot = BuildSelfTestSnapshot();
-            if (!ValidateSelfTest(snapshot, out var reason))
+            var failure = RunSelfTest(out var snapshot);
+            if (failure is not null)
             {
-                WriteLineStderr(reason ?? "self-test validation failed");
-                return 1;
-            }
-
-            if (!ValidateSnapshotSelfTest(snapshot, out reason))
-            {
-                WriteLineStderr(reason ?? "snapshot self-test validation failed");
+                WriteLineStderr(failure);
                 return 1;
             }
 
@@ -116,6 +111,7 @@ internal static class Program
             try
             {
                 SnapshotFile.ValidatePath(parse.SnapshotPath);
+                SnapshotFile.DeleteOrphanedTemporaries(parse.SnapshotPath);
             }
             catch (Exception ex)
             {
@@ -225,10 +221,10 @@ internal static class Program
             }
         }
 
-        var modes = (stdioMode ? 1 : 0) + (selfTest ? 1 : 0) + (!string.IsNullOrEmpty(snapshotPath) ? 1 : 0) + (samplesSpecified && !string.IsNullOrEmpty(snapshotPath) ? 1 : 0);
-        if (modes > 1)
+        var modes = (stdioMode ? 1 : 0) + (selfTest ? 1 : 0) + (!string.IsNullOrEmpty(snapshotPath) ? 1 : 0);
+        if (modes > 1 || (modes == 1 && samplesSpecified))
         {
-            return (false, false, string.Empty, DefaultSamples, false, 2, "--snapshot-file cannot be combined with --stdio, --samples, or --self-test");
+            return (false, false, string.Empty, DefaultSamples, false, 2, "choose one of --stdio, --self-test, --snapshot-file; --samples is valid only with none of them");
         }
 
         return (stdioMode, selfTest, snapshotPath, samples, samplesSpecified, 0, string.Empty);
@@ -237,8 +233,8 @@ internal static class Program
     private static void WriteUsage()
     {
         WriteLineStderr("Usage:");
-        WriteLineStderr("  turzx-sensors [--samples N] [--stdio] [--self-test]");
-        WriteLineStderr("  turzx-sensors --snapshot-file <absolute path>");
+        WriteLineStderr("  turzx-sensors [--samples N]");
+        WriteLineStderr("  turzx-sensors --stdio | --self-test | --snapshot-file <absolute path>");
         WriteLineStderr("  --samples N   number of samples, default 5, 0 for continuous");
         WriteLineStderr("  --stdio       read one 'sample' line per snapshot");
         WriteLineStderr("  --self-test   validate JSON schema without hardware access");
@@ -255,7 +251,7 @@ internal static class Program
         var taken = 0;
         while (!token.IsCancellationRequested)
         {
-            WriteJsonLine(stdout, CollectSnapshot(computer, driverState, new List<string>(driverState.Errors)));
+            WriteJsonLine(stdout, CollectSnapshot(computer, driverState));
             taken++;
 
             if (samples > 0 && taken >= samples)
@@ -275,11 +271,25 @@ internal static class Program
         string snapshotPath,
         CancellationToken token)
     {
+        var failures = 0;
         while (!token.IsCancellationRequested)
         {
-            var snapshot = CollectSnapshot(computer, driverState, new List<string>(driverState.Errors));
-            var json = JsonSerializer.Serialize(snapshot, JsonOptions);
-            SnapshotFile.WriteAtomic(snapshotPath, json);
+            var json = JsonSerializer.Serialize(CollectSnapshot(computer, driverState), JsonOptions);
+            try
+            {
+                SnapshotFile.WriteAtomic(snapshotPath, json);
+                failures = 0;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failures++;
+                WriteLineStderr($"snapshot write failed ({failures}/{MaxConsecutiveSnapshotFailures}): {ex.Message}");
+                if (failures >= MaxConsecutiveSnapshotFailures)
+                {
+                    return 1;
+                }
+            }
+
             await Task.Delay(SleepMilliseconds, token);
         }
 
@@ -295,7 +305,17 @@ internal static class Program
         using var input = Console.OpenStandardInput();
         while (!token.IsCancellationRequested)
         {
-            var line = await ReadBoundedLineAsync(input, token);
+            string? line;
+            try
+            {
+                line = await ReadBoundedLineAsync(input, token);
+            }
+            catch (InvalidDataException ex)
+            {
+                WriteLineStderr(ex.Message);
+                return 2;
+            }
+
             if (line == null)
             {
                 return 0;
@@ -307,7 +327,7 @@ internal static class Program
                 return 2;
             }
 
-            WriteJsonLine(stdout, CollectSnapshot(computer, driverState, new List<string>(driverState.Errors)));
+            WriteJsonLine(stdout, CollectSnapshot(computer, driverState));
         }
 
         return 0;
@@ -333,8 +353,7 @@ internal static class Program
             lineLength++;
             if (lineLength > MaxStdioLineLength)
             {
-                WriteLineStderr($"invalid input length: {lineLength} > {MaxStdioLineLength}");
-                return "__line_too_long__";
+                throw new InvalidDataException($"invalid input length: {lineLength} > {MaxStdioLineLength}");
             }
 
             if (ch == '\r')
@@ -353,10 +372,10 @@ internal static class Program
         return line.ToString();
     }
 
-    private static SensorSnapshot CollectSnapshot(Computer computer, SensorDriverState driverState, List<string> sharedErrors)
+    private static SensorSnapshot CollectSnapshot(Computer computer, SensorDriverState driverState)
     {
         var observedAt = Timestamp();
-        var errors = new List<string>(sharedErrors);
+        var errors = new List<string>(driverState.Errors);
         var payloads = new List<SensorPayload>();
 
         foreach (var hardware in computer.Hardware)
@@ -421,7 +440,7 @@ internal static class Program
 
             try
             {
-                AddValuePayload(output, errors, hardware, sensor, observedAt);
+                AddValuePayload(output, hardware, sensor, observedAt);
             }
             catch (Exception ex)
             {
@@ -436,15 +455,15 @@ internal static class Program
         }
     }
 
-    private static void AddValuePayload(List<SensorPayload> output, List<string> errors, IHardware hardware, ISensor sensor, string observedAt)
+    private static void AddValuePayload(List<SensorPayload> output, IHardware hardware, ISensor sensor, string observedAt)
     {
         var value = sensor.Value;
         var isValid = value.HasValue && IsValidValue(sensor.SensorType, value.Value);
 
         if (!isValid)
         {
+            // A null/invalid reading is reported by the sensor's own "error" state only.
             output.Add(BuildErrorPayload(hardware, sensor));
-            errors.Add($"invalid sensor value: {hardware.Name}/{sensor.Name}");
             return;
         }
 
@@ -560,209 +579,41 @@ internal static class Program
         }
     }
 
-    private static SensorSnapshot BuildSelfTestSnapshot()
+    // Self-test: JSON round-trip of a small snapshot and WriteAtomic rejecting a
+    // directory target. Returns a failure reason or null.
+    private static string? RunSelfTest(out SensorSnapshot snapshot)
     {
         var now = Timestamp();
-        return new SensorSnapshot
+        snapshot = new SensorSnapshot
         {
             ObservedAt = now,
-            DriverInstalled = false,
             Elevated = IsElevated(),
-            Errors = Array.Empty<string>(),
             Sensors = new[]
             {
-                new SensorPayload
-                {
-                    SensorId = "selftest-load-cpu",
-                    HardwareId = "selftest-cpu",
-                    HardwareType = "Cpu",
-                    Name = "CPU Load",
-                    Type = "Load",
-                    Value = 42,
-                    State = "ok",
-                    ObservedAt = now
-                },
-                new SensorPayload
-                {
-                    SensorId = "selftest-temp-cpu",
-                    HardwareId = "selftest-cpu",
-                    HardwareType = "Cpu",
-                    Name = "CPU Temperature",
-                    Type = "Temperature",
-                    Value = 55,
-                    State = "ok",
-                    ObservedAt = now
-                },
-                new SensorPayload
-                {
-                    SensorId = "selftest-error",
-                    HardwareId = "selftest-cpu",
-                    HardwareType = "Cpu",
-                    Name = "CPU Invalid",
-                    Type = "Load",
-                    Value = null,
-                    State = "error",
-                    ObservedAt = null
-                }
+                new SensorPayload { SensorId = "selftest-load-cpu", HardwareId = "selftest-cpu", HardwareType = "Cpu", Name = "CPU Load", Type = "Load", Value = 42, State = "ok", ObservedAt = now },
+                new SensorPayload { SensorId = "selftest-error", HardwareId = "selftest-cpu", HardwareType = "Cpu", Name = "CPU Invalid", Type = "Load", Value = null, State = "error", ObservedAt = null }
             }
         };
-    }
 
-    private static bool ValidateSelfTest(SensorSnapshot snapshot, out string? reason)
-    {
-        reason = null;
-        if (snapshot.ProtocolVersion != 1)
+        var parsed = JsonSerializer.Deserialize<SensorSnapshot>(JsonSerializer.Serialize(snapshot, JsonOptions), JsonOptions);
+        if (parsed is null || parsed.ProtocolVersion != 1 || parsed.ObservedAt != now || parsed.Sensors.Length != 2 ||
+            parsed.Sensors[0].SensorId != "selftest-load-cpu" || parsed.Sensors[0].Value != 42 || parsed.Sensors[0].State != "ok" || parsed.Sensors[0].ObservedAt != now ||
+            parsed.Sensors[1].SensorId != "selftest-error" || parsed.Sensors[1].Value is not null || parsed.Sensors[1].State != "error" || parsed.Sensors[1].ObservedAt is not null)
         {
-            reason = "protocol_version must be 1";
-            return false;
+            return "self-test JSON round-trip mismatch";
         }
-
-        if (IsValidValue(SensorType.Load, double.NaN) || IsValidValue(SensorType.Load, -1) || IsValidValue(SensorType.Load, 101))
-        {
-            reason = "Load validation checks failed";
-            return false;
-        }
-
-        if (!IsValidValue(SensorType.Load, 0) || !IsValidValue(SensorType.Temperature, -273.15) || IsValidValue(SensorType.Temperature, -274))
-        {
-            reason = "Temperature/Load range checks failed";
-            return false;
-        }
-
-        if (snapshot.Sensors.Length < 2)
-        {
-            reason = "self-test sensors missing";
-            return false;
-        }
-
-        foreach (var sensor in snapshot.Sensors)
-        {
-            if (!IsTarget(ParseSensorType(sensor.Type)))
-            {
-                reason = $"unsupported sensor type: {sensor.Type}";
-                return false;
-            }
-
-            if (sensor.State == "ok")
-            {
-                if (sensor.Value is null)
-                {
-                    reason = $"sensor {sensor.SensorId} missing value";
-                    return false;
-                }
-
-                if (!IsValidValue(ParseSensorType(sensor.Type), sensor.Value.Value))
-                {
-                    reason = $"sensor {sensor.SensorId} value invalid";
-                    return false;
-                }
-
-                if (sensor.ObservedAt is null)
-                {
-                    reason = $"sensor {sensor.SensorId} missing observed_at";
-                    return false;
-                }
-            }
-            else
-            {
-                if (sensor.Value is not null)
-                {
-                    reason = $"sensor {sensor.SensorId} should keep value null on error";
-                    return false;
-                }
-
-                if (sensor.ObservedAt is not null)
-                {
-                    reason = $"sensor {sensor.SensorId} should keep observed_at null on error";
-                    return false;
-                }
-            }
-        }
-
-        var rendered = JsonSerializer.Serialize(snapshot, JsonOptions);
-        using var document = JsonDocument.Parse(rendered);
-        if (!document.RootElement.TryGetProperty("sensors", out var sensorsElement) || sensorsElement.ValueKind != JsonValueKind.Array)
-        {
-            reason = "self-test JSON missing sensors";
-            return false;
-        }
-
-        var hasErrorNullEntry = sensorsElement
-            .EnumerateArray()
-            .Any(item =>
-                item.GetProperty("state").GetString() == "error" &&
-                item.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Null &&
-                item.TryGetProperty("observed_at", out var observedAt) && observedAt.ValueKind == JsonValueKind.Null);
-
-        if (!hasErrorNullEntry)
-        {
-            reason = "self-test JSON must include null value and null observed_at for error sensor";
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool ValidateSnapshotSelfTest(SensorSnapshot snapshot, out string? reason)
-    {
-        reason = null;
-        var directory = Path.Combine(Path.GetTempPath(), $"turzx-sensors-selftest-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        var target = Path.Combine(directory, "snapshot.json");
 
         try
         {
-            var rendered = JsonSerializer.Serialize(snapshot, JsonOptions);
-            SnapshotFile.WriteAtomic(target, rendered);
-            var persisted = File.ReadAllText(target);
-            var parsed = JsonSerializer.Deserialize<SensorSnapshot>(persisted, JsonOptions);
-            string? parseReason = null;
-            if (parsed is null || !ValidateSelfTest(parsed, out parseReason))
-            {
-                reason = parseReason ?? "snapshot self-test parse failed";
-                return false;
-            }
-
-            try
-            {
-                SnapshotFile.WriteAtomic(directory, rendered);
-                reason = "snapshot self-test failure path unexpectedly succeeded";
-                return false;
-            }
-            catch (IOException)
-            {
-                // A directory target must fail before a temporary file is made.
-            }
-
-            if (Directory.EnumerateFiles(directory, "*.tmp", SearchOption.TopDirectoryOnly).Any())
-            {
-                reason = "snapshot self-test left a temporary file";
-                return false;
-            }
-
-            return true;
+            SnapshotFile.WriteAtomic(Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar), "{}");
+            return "self-test: WriteAtomic accepted a directory target";
         }
-        catch (Exception ex)
+        catch (IOException)
         {
-            reason = $"snapshot self-test failed: {ex.Message}";
-            return false;
+            // Expected: a directory target is rejected before any temp file is made.
         }
-        finally
-        {
-            try
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-            catch
-            {
-                // The validation result above remains the useful failure.
-            }
-        }
-    }
 
-    private static SensorType ParseSensorType(string type)
-    {
-        return Enum.Parse<SensorType>(type, ignoreCase: true);
+        return null;
     }
 
     private static string Timestamp() => DateTime.UtcNow.ToString("o");

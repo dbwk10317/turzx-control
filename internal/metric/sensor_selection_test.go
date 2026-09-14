@@ -46,10 +46,10 @@ func TestHardwareSensorSelectionReadingsApplyIDsAndMetadata(t *testing.T) {
 		DriverInstalled: true,
 		Elevated:        true,
 		Sensors: []HelperSensor{
-			{SensorID: "/cpu/0/temperature/0", Name: "CPU", Type: "Temperature", State: "ok", Value: floatPtr(42.5)},
-			{SensorID: "/gpu-nvidia/0/load/0", Name: "GPU Load", Type: "Load", State: "ok", Value: floatPtr(57.0)},
-			{SensorID: "/gpu-nvidia/0/temperature/0", Name: "GPU Temp", Type: "Temperature", State: "ok", Value: floatPtr(62.0)},
-			{SensorID: "/ram/0/temperature/0", Name: "RAM", Type: "Temperature", State: "ok", Value: floatPtr(38.0)},
+			{SensorID: "/cpu/0/temperature/0", HardwareType: "Cpu", Name: "CPU", Type: "Temperature", State: "ok", Value: floatPtr(42.5)},
+			{SensorID: "/gpu-nvidia/0/load/0", HardwareType: "GpuNvidia", Name: "GPU Load", Type: "Load", State: "ok", Value: floatPtr(57.0)},
+			{SensorID: "/gpu-nvidia/0/temperature/0", HardwareType: "GpuNvidia", Name: "GPU Temp", Type: "Temperature", State: "ok", Value: floatPtr(62.0)},
+			{SensorID: "/ram/0/temperature/0", HardwareType: "Memory", Name: "RAM", Type: "Temperature", State: "ok", Value: floatPtr(38.0)},
 		},
 	}
 
@@ -77,7 +77,7 @@ func TestHardwareSensorSelectionReadingsTypeMismatch(t *testing.T) {
 		DriverInstalled: true,
 		Elevated:        true,
 		Sensors: []HelperSensor{
-			{SensorID: "/cpu/0/temperature/0", Name: "CPU", Type: "Load", State: "ok", Value: floatPtr(42.0)},
+			{SensorID: "/cpu/0/temperature/0", HardwareType: "Cpu", Name: "CPU", Type: "Load", State: "ok", Value: floatPtr(42.0)},
 		},
 	}
 
@@ -98,8 +98,8 @@ func TestHardwareSensorSelectionReadingsDuplicateID(t *testing.T) {
 		DriverInstalled: true,
 		Elevated:        true,
 		Sensors: []HelperSensor{
-			{SensorID: "/gpu-nvidia/0/load/0", Name: "GPU Load A", Type: "Load", State: "ok", Value: &valueA},
-			{SensorID: "/gpu-nvidia/0/load/0", Name: "GPU Load B", Type: "Load", State: "ok", Value: &valueB},
+			{SensorID: "/gpu-nvidia/0/load/0", HardwareType: "GpuNvidia", Name: "GPU Load A", Type: "Load", State: "ok", Value: &valueA},
+			{SensorID: "/gpu-nvidia/0/load/0", HardwareType: "GpuNvidia", Name: "GPU Load B", Type: "Load", State: "ok", Value: &valueB},
 		},
 	}
 
@@ -118,7 +118,7 @@ func TestHardwareSensorSelectionReadingsNullValue(t *testing.T) {
 		DriverInstalled: true,
 		Elevated:        true,
 		Sensors: []HelperSensor{
-			{SensorID: "/ram/0/temperature/0", Name: "RAM", Type: "Temperature", State: "ok", Value: nil},
+			{SensorID: "/ram/0/temperature/0", HardwareType: "Memory", Name: "RAM", Type: "Temperature", State: "ok", Value: nil},
 		},
 	}
 	readings := selection.Readings(snapshot, nil, time.Unix(124, 0))
@@ -138,7 +138,7 @@ func TestHardwareSensorSelectionReadingsUnsupportedRAMWithNoBoard(t *testing.T) 
 		ObservedAt:      timePtr(time.Unix(123, 0)),
 		DriverInstalled: true,
 		Elevated:        true,
-		Sensors:         []HelperSensor{{SensorID: "/cpu/0/temperature/0", Name: "CPU", Type: "Temperature", State: "ok", Value: floatPtr(44)}},
+		Sensors:         []HelperSensor{{SensorID: "/cpu/0/temperature/0", HardwareType: "Cpu", Name: "CPU", Type: "Temperature", State: "ok", Value: floatPtr(44)}},
 	}
 	readings := selection.Readings(snapshot, nil, time.Unix(124, 0))
 	cpu := readingByID(readings, "cpu.temperature")
@@ -203,7 +203,7 @@ func TestHardwareSensorSelectionReadingsMotherboardFallbackUsesFixedLabel(t *tes
 		DriverInstalled: true,
 		Elevated:        true,
 		Sensors: []HelperSensor{
-			{SensorID: "/mb/0/temperature/0", Name: "Real MB Label", Type: "Temperature", State: "ok", Value: floatPtr(37)},
+			{SensorID: "/mb/0/temperature/0", HardwareType: "Motherboard", Name: "Real MB Label", Type: "Temperature", State: "ok", Value: floatPtr(37)},
 		},
 	}, nil, time.Unix(124, 0))
 	ram := readingByID(readings, "ram.temperature")
@@ -224,9 +224,9 @@ func TestHardwareSensorSelectionReadingsIgnoreUnselectedDuplicateIDs(t *testing.
 		DriverInstalled: true,
 		Elevated:        true,
 		Sensors: []HelperSensor{
-			{SensorID: "/gpu-nvidia/0/load/0", Name: "GPU Load A", Type: "Load", State: "ok", Value: &unselectedA},
-			{SensorID: "/gpu-nvidia/0/load/0", Name: "GPU Load B", Type: "Load", State: "ok", Value: &unselectedA},
-			{SensorID: "/gpu-nvidia/0/load/3", Name: "GPU Load Selected", Type: "Load", State: "ok", Value: &selected},
+			{SensorID: "/gpu-nvidia/0/load/0", HardwareType: "GpuNvidia", Name: "GPU Load A", Type: "Load", State: "ok", Value: &unselectedA},
+			{SensorID: "/gpu-nvidia/0/load/0", HardwareType: "GpuNvidia", Name: "GPU Load B", Type: "Load", State: "ok", Value: &unselectedA},
+			{SensorID: "/gpu-nvidia/0/load/3", HardwareType: "GpuNvidia", Name: "GPU Load Selected", Type: "Load", State: "ok", Value: &selected},
 		},
 	}
 	readings := selection.Readings(snapshot, nil, time.Unix(124, 0))
@@ -252,7 +252,7 @@ func readingByID(readings []Reading, id string) *Reading {
 func TestSensorValueBoundariesAndRecovery(t *testing.T) {
 	s := HardwareSensorSelection{GPUUsageSensor: "load", RAMTemperatureUnsupported: true}
 	for _, value := range []float64{0, -1, 101, math.NaN(), 25} {
-		snapshot := HelperSnapshot{Sensors: []HelperSensor{{SensorID: "load", Type: "Load", State: "ok", Value: &value}}}
+		snapshot := HelperSnapshot{Sensors: []HelperSensor{{SensorID: "load", HardwareType: "GpuNvidia", Type: "Load", State: "ok", Value: &value}}}
 		readings := s.Readings(snapshot, nil, time.Unix(100, 0))
 		gpu := readingByID(readings, "gpu.usage")
 		valid := finite(value) && value >= 0 && value <= 100
@@ -269,5 +269,23 @@ func TestSensorValueBoundariesAndRecovery(t *testing.T) {
 	failed := s.Readings(HelperSnapshot{}, errors.New("disconnected"), time.Now())
 	if readingByID(failed, "gpu.usage").Value != nil || readingByID(failed, "ram.temperature").State != "unsupported" {
 		t.Fatal("failed sample reused value or lost unsupported state")
+	}
+}
+
+func TestHardwareSensorSelectionRejectsWrongHardwareType(t *testing.T) {
+	selection := HardwareSensorSelection{CPUTemperatureSensor: "/lpc/0/temperature/0", GPUUsageSensor: "/gpu-amd/0/load/0"}
+	snapshot := HelperSnapshot{
+		ProtocolVersion: 1, ObservedAt: timePtr(time.Unix(123, 0)), DriverInstalled: true, Elevated: true,
+		Sensors: []HelperSensor{
+			{SensorID: "/lpc/0/temperature/0", HardwareType: "SuperIO", Type: "Temperature", State: "ok", Value: floatPtr(40)},
+			{SensorID: "/gpu-amd/0/load/0", HardwareType: "GpuAmd", Type: "Load", State: "ok", Value: floatPtr(50)},
+		},
+	}
+	readings := selection.Readings(snapshot, nil, time.Unix(124, 0))
+	if cpu := readingByID(readings, "cpu.temperature"); cpu.State != "error" || cpu.Error != "sensor hardware type mismatch" {
+		t.Fatalf("board sensor accepted as CPU: %#v", cpu)
+	}
+	if gpu := readingByID(readings, "gpu.usage"); gpu.State != "ok" {
+		t.Fatalf("AMD GPU rejected: %#v", gpu)
 	}
 }

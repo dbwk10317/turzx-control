@@ -55,4 +55,12 @@ GPL-3.0-or-later를 따른다. 새 소스 파일에는 SPDX 헤더와 필요한 
 
 도구와 셸에서 확인한 차이는 이 문서에 기록하되 세션 권한을 영구 허용으로 적지 않는다. 파일 검색은 `rg`/`rg --files`를 우선한다. 독립적인 읽기·검색은 병렬화하고 의존 작업·변경은 순서대로 수행한다. 파일 수정은 `apply_patch`를 사용한다. 파괴적 작업은 정확한 대상을 먼저 확인하고 명시적 요청 없이는 수행하지 않는다. `$HOME`, `$CODEX_HOME` 같은 공통 환경 변수는 작업 변수로 재사용하지 않는다.
 
-Windows에서 Go가 PATH에 없으면 `C:\Program Files\Go\bin\go.exe`를 사용한다. Windows cgo·libusb 검증은 `README.md`의 환경 설정을 적용한다. 완료된 설계와 날짜별 작업 이력은 유지 문서에 복사하지 않는다.
+Windows에서 Go가 PATH에 없으면 `C:\Program Files\Go\bin\go.exe`를 사용한다. Windows cgo·libusb 검증은 `README.md`의 환경 설정과 아래 로컬 개발 환경 절의 경로를 적용한다. 완료된 설계와 날짜별 작업 이력은 유지 문서에 복사하지 않는다.
+
+## 로컬 개발 환경
+
+저장소 밖에 있는 외부 도구의 실제 위치다. 환경마다 다르므로 `README.md`에는 자리표시자만 두고 여기서 관리한다. 다른 PC에서 작업하면 이 절을 그 PC의 경로로 갱신한다.
+
+- MSYS2 UCRT64: `C:\Workspace\tools\msys64` (GCC·`pkg-config`·libusb는 `ucrt64\bin` 아래)
+- FFmpeg: `C:\Workspace\tools\ffmpeg-9.0.1-essentials_build\bin\ffmpeg.exe`
+- Go 검증 전 셸에서 `PATH` 앞에 `ucrt64\bin`을 두고 `CGO_ENABLED=1`, `CC`, `PKG_CONFIG`를 위 경로로 지정한다. 이 설정 없이는 `internal/turzx`·`internal/daemon`·`cmd/turzx-control`·`cmd/turzx-probe`가 빌드되지 않고 `-race`를 쓸 수 없다.

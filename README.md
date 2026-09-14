@@ -28,12 +28,13 @@ standalone ZIP, 설치 프로그램, 코드 서명과 최종 배포용 고지는
 ## Windows 개발 환경
 
 필요한 도구는 Go, MSYS2 UCRT64의 GCC·`pkg-config`·libusb, .NET 8 SDK, FFmpeg다.
-저장소의 `.tools` 아래에 있는 개발 도구를 그대로 사용하거나 별도 개발 경로를 지정한다.
-USB 빌드에는 `CGO_ENABLED=1`과 UCRT64 컴파일러가 필요하다.
+.NET SDK·NuGet·PawnIO 설치본은 저장소의 `.tools` 아래에 둔다. MSYS2와 FFmpeg처럼
+저장소 밖에 있는 도구의 실제 경로는 환경마다 다르므로 `AGENTS.md`의 로컬 개발 환경
+절에서 관리한다. USB 빌드에는 `CGO_ENABLED=1`과 UCRT64 컴파일러가 필요하다.
 
 ```powershell
 $repo = (Resolve-Path .).Path
-$msys = 'C:\tools\msys64'
+$msys = '<MSYS2 설치 경로>'   # AGENTS.md 로컬 개발 환경 절 참조
 $env:Path = "$msys\ucrt64\bin;$env:Path"
 $env:CGO_ENABLED = '1'
 $env:CC = "$msys\ucrt64\bin\gcc.exe"
@@ -123,7 +124,9 @@ publish는 거부한다. 새 빌드는 검토·self-test 후 설치 스크립트
 설치 파일을 동봉할 뿐, 드라이버를 자동 설치하지 않는다. 제거는 예약 작업을 해제하며
 공유 드라이버와 보호된 바이너리는 의도적으로 보존한다.
 
-컨트롤 자체의 사용자 로그인 자동 시작은 다음과 같이 관리한다.
+컨트롤 자체의 사용자 로그인 자동 시작은 다음과 같이 관리한다. `settings.json`이
+있으면 등록 전에 그 내용을 검증하므로, 실행 옵션을 바꿨다면 먼저 `-save-config`로
+저장한다. 파일이 없으면 컴파일된 기본값으로 등록한다.
 
 ```powershell
 .\turzx-control.exe -autostart enable
@@ -160,6 +163,8 @@ USB 대상 검사는 `cmd/turzx-probe`를 사용하며, 시작 시 장치 응답
 libusb도 별도 고지가 필요하다. 최종 standalone ZIP을 만들기 전에 각 동봉 파일의
 라이선스·저작권·소스 제공 의무를 `THIRD-PARTY-NOTICES.txt`로 정리해야 한다.
 테마 배경과 정의는 `assets/backgrounds/<테마 ID>.mp4`와 `<테마 ID>.theme.json`으로
-함께 추적한다. 사용자 제공 배경의 외부 재배포 권리는 공개 배포 전에 별도로 확인한다.
+함께 추적한다. `theme.json`은 디자인 참조 문서이며 데몬은 레이아웃을
+`internal/render`의 Go 코드에서 그린다. 설정 UI는 127.0.0.1에만 열리지만 같은 PC의
+다른 프로세스와 사용자 계정은 접근할 수 있으므로 공유 PC에서는 이 점을 고려한다. 사용자 제공 배경의 외부 재배포 권리는 공개 배포 전에 별도로 확인한다.
 빌드 실행 파일과 설치 패키지 ZIP은 루트 `bin/`에 두며 Git에서 제외한다.
 테스트와 코드만으로 기능 검증을 재현할 수 있어야 한다.

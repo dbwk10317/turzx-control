@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"sync"
 )
 
 const (
@@ -71,3 +72,9 @@ func ValidatePNG(data []byte) error {
 	}
 	return nil
 }
+
+// blankPNG is the transparent native-size frame sent before a video starts.
+// It never changes, so it is encoded and validated once.
+var blankPNG = sync.OnceValues(func() ([]byte, error) {
+	return EncodePNG(image.NewNRGBA(image.Rect(0, 0, nativeWidth, nativeHeight)))
+})

@@ -21,29 +21,28 @@ import (
 	"github.com/dbwk10317/turzx-control/internal/turzx"
 )
 
-func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+// themes pairs each theme ID with its preview overlay and its live overlay.
+var themes = map[string]struct {
+	preview render.Overlay
+	live    func(func() render.Dashboard) render.Overlay
+}{
+	"azure-ribbon":   {render.AzurePreviewOverlay, render.AzureOverlay},
+	"smon-halloween": {render.HalloweenPreviewOverlay, render.HalloweenOverlay},
 }
 
 // runLive is a bounded G1 experiment and theme preview, not the product daemon.
-func runLive(background, theme, ffmpeg, output string, duration, timeout, flush, chunkWait time.Duration, opts turzx.VideoOptions, cfgs ...*liveDataConfig) error {
+func runLive(background, theme, ffmpeg, output string, duration, timeout, flush, chunkWait time.Duration, opts turzx.VideoOptions, liveCfg *liveDataConfig) error {
 	if !strings.EqualFold(filepath.Ext(background), ".mp4") {
 		return fmt.Errorf("background must be an MP4 file")
 	}
 	var overlay render.Overlay
 	var overlayInterval time.Duration
 	if theme != "" {
-		switch theme {
-		case "azure-ribbon":
-			overlay = render.AzurePreviewOverlay
-		case "smon-halloween":
-			overlay = render.HalloweenPreviewOverlay
-		default:
+		selected, ok := themes[theme]
+		if !ok {
 			return fmt.Errorf("unknown theme %q", theme)
 		}
+		overlay = selected.preview
 		overlayInterval = time.Second
 	}
 	file, err := os.Open(background)
@@ -84,28 +83,10 @@ func runLive(background, theme, ffmpeg, output string, duration, timeout, flush,
 	}
 	liveCtx, stop := context.WithTimeout(ctx, duration)
 	defer stop()
-	var collector *liveData
-	var liveCfg *liveDataConfig
-	if len(cfgs) > 0 {
-		liveCfg = cfgs[0]
-	}
 	if liveCfg != nil {
-		collector, err = newLiveData(liveCtx, *liveCfg, os.Stderr)
-		if err != nil {
-			if destination != nil {
-				return errors.Join(err, destination.Close())
-			}
-			if device != nil {
-				return errors.Join(err, device.Close())
-			}
-			return err
-		}
-		switch theme {
-		case "azure-ribbon":
-			overlay = render.AzureOverlay(func() render.Dashboard { return collector.dashboard(time.Now()) })
-		case "smon-halloween":
-			overlay = render.HalloweenOverlay(func() render.Dashboard { return collector.dashboard(time.Now()) })
-		}
+		sources := liveCfg.start(liveCtx, os.Stderr)
+		defer sources.Close()
+		overlay = themes[theme].live(sources.Dashboard)
 	}
 	started := time.Now()
 	if device != nil {
@@ -156,37 +137,30 @@ func runLive(background, theme, ffmpeg, output string, duration, timeout, flush,
 	if device != nil {
 		closeErr = errors.Join(closeErr, device.Close())
 	}
-	var collectorCloseErr error
-	if collector != nil {
-		collectorCloseErr = collector.Close()
-		closeErr = errors.Join(closeErr, collectorCloseErr)
-	}
 	err = errors.Join(startErr, runErr, closeErr)
 	result := struct {
-		Step                string    `json:"step"`
-		StartedAt           time.Time `json:"started_at"`
-		ElapsedMS           int64     `json:"elapsed_ms"`
-		BackgroundSHA256    string    `json:"background_sha256"`
-		FFmpeg              string    `json:"ffmpeg"`
-		EncoderArgs         []string  `json:"encoder_args"`
-		ChunkWaitLimitMS    int64     `json:"chunk_wait_limit_ms"`
-		Bytes               int64     `json:"bytes"`
-		Chunks              int       `json:"chunks"`
-		ChunkSize           int       `json:"chunk_size"`
-		MaxQueueDepth       byte      `json:"max_queue_depth"`
-		MaxChunkWaitMS      int64     `json:"max_chunk_wait_ms"`
-		StopResponse        string    `json:"stop_response_hex,omitempty"`
-		CollectorCloseError string    `json:"collector_close_error,omitempty"`
-		DurationReached     bool      `json:"duration_reached"`
-		Error               string    `json:"error,omitempty"`
+		Step             string    `json:"step"`
+		StartedAt        time.Time `json:"started_at"`
+		ElapsedMS        int64     `json:"elapsed_ms"`
+		BackgroundSHA256 string    `json:"background_sha256"`
+		FFmpeg           string    `json:"ffmpeg"`
+		EncoderArgs      []string  `json:"encoder_args"`
+		ChunkWaitLimitMS int64     `json:"chunk_wait_limit_ms"`
+		Bytes            int64     `json:"bytes"`
+		Chunks           int       `json:"chunks"`
+		ChunkSize        int       `json:"chunk_size"`
+		MaxQueueDepth    byte      `json:"max_queue_depth"`
+		MaxChunkWaitMS   int64     `json:"max_chunk_wait_ms"`
+		StopResponse     string    `json:"stop_response_hex,omitempty"`
+		DurationReached  bool      `json:"duration_reached"`
+		Error            string    `json:"error,omitempty"`
 	}{
 		Step: "live-h264", StartedAt: started, ElapsedMS: time.Since(started).Milliseconds(),
 		BackgroundSHA256: hex.EncodeToString(hash.Sum(nil)), Bytes: report.Bytes, Chunks: report.Chunks,
 		FFmpeg: ffmpeg, EncoderArgs: encoderArgs, ChunkWaitLimitMS: chunkWait.Milliseconds(),
 		ChunkSize: report.ChunkSize, MaxQueueDepth: report.MaxQueueDepth,
 		MaxChunkWaitMS: report.MaxChunkWait.Milliseconds(), StopResponse: hex.EncodeToString(report.StopResponse),
-		CollectorCloseError: errorString(collectorCloseErr),
-		DurationReached:     errors.Is(liveCtx.Err(), context.DeadlineExceeded),
+		DurationReached: errors.Is(liveCtx.Err(), context.DeadlineExceeded),
 	}
 	if destination != nil {
 		result.Step = "render-only"

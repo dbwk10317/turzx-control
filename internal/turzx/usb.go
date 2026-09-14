@@ -11,7 +11,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"image"
 	"io"
 	"sync"
 	"time"
@@ -29,7 +28,7 @@ const (
 // transfer within the configured assembly and transfer-start wait limit.
 var ErrChunkWait = errors.New("H264 chunk wait limit exceeded")
 
-// VideoOptions are deliberately limited to the values needed by the G1 probe.
+// VideoOptions configure one live H264 upload for the daemon and the probe.
 type VideoOptions struct {
 	FrameRate    byte
 	Brightness   byte
@@ -45,7 +44,7 @@ type VideoProgress struct {
 	MaxQueueDepth byte
 }
 
-// VideoReport records H264 transfer values needed for G1 checks.
+// VideoReport records how one H264 upload ran and how it stopped.
 type VideoReport struct {
 	ChunkSize           int
 	Chunks              int
@@ -285,7 +284,7 @@ func (u *USB) sendH264(ctx context.Context, opts VideoOptions, send func(context
 	if opts.QueueTimeout <= 0 {
 		return report, fmt.Errorf("H264 queue timeout must be positive")
 	}
-	clearPNG, err := EncodePNG(image.NewNRGBA(image.Rect(0, 0, nativeWidth, nativeHeight)))
+	clearPNG, err := blankPNG()
 	if err != nil {
 		return report, err
 	}
@@ -299,28 +298,22 @@ func (u *USB) sendH264(ctx context.Context, opts VideoOptions, send func(context
 		return report, fmt.Errorf("USB requires successful Sync before H264 upload")
 	}
 	started := time.Now()
-	videoStarted := false
+	// The device may accept command 111 even if its response fails, so the
+	// bounded stop attempt always runs once the init sequence has begun.
 	defer func() {
-		if videoStarted {
-			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), u.timeout)
-			response, stopErr := u.command(stopCtx, CmdVideoStop, nil)
-			cancel()
-			report.StopResponse = response
-			report.StopError = stopErr
-			err = errors.Join(err, stopErr)
-		}
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), u.timeout)
+		response, stopErr := u.command(stopCtx, CmdVideoStop, nil)
+		cancel()
+		report.StopResponse = response
+		report.StopError = stopErr
+		err = errors.Join(err, stopErr)
 		report.Elapsed = time.Since(started)
 		if err != nil {
 			u.synced = false
 		}
 	}()
 
-	for i, cmd := range []byte{CmdVideoInit111, CmdVideoInit112, CmdVideoInit13, CmdBrightness, CmdVideoInit41} {
-		if i == 0 {
-			// The device may accept command 111 even if its response fails;
-			// still trigger the bounded stop attempt.
-			videoStarted = true
-		}
+	for _, cmd := range []byte{CmdVideoInit111, CmdVideoInit112, CmdVideoInit13, CmdBrightness, CmdVideoInit41} {
 		var set func([]byte)
 		if cmd == CmdBrightness {
 			set = func(header []byte) { header[8] = opts.Brightness }
@@ -439,6 +432,8 @@ func (u *USB) transact(ctx context.Context, cmd byte, packet []byte) ([]byte, er
 	if err != nil {
 		err = fmt.Errorf("USB response: %w", err)
 	} else if n < 9 || (response[1] != 0xc8 && response[8] != 0xc8) {
+		// Most replies carry the marker at byte 1; the queue-status reply keeps
+		// its depth at byte 8, which waitVideoQueue checks separately.
 		err = fmt.Errorf("USB response missing success marker (length %d, response %x)", n, response)
 	} else if response[0] != cmd {
 		// Sync and PNG responses on the supported panel echo the command ID.
@@ -491,7 +486,8 @@ func (u *USB) drain(ctx context.Context, maxReads int) error {
 }
 
 // Close releases the interface, configuration, device and libusb context in
-// reverse order. It waits for any bounded transaction currently in progress.
+// reverse order. It waits for the transaction in progress, which for a live
+// H264 stream means the stream must end or be canceled first.
 func (u *USB) Close() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()

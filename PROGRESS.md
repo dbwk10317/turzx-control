@@ -13,3 +13,5 @@
 - 첫 설정 UI에서 센서 선택, snapshot 경로 계약, 표준 사용자 동작과 최초 관리자 승인 흐름을 확인한다.
 - Windows/macOS/Linux별 빌드·실행·권한·서명 검증을 수행한다.
 - 라이선스 notices와 corresponding source 제공 절차를 배포물에 포함한다.
+- 2026-09-14 리뷰 반영으로 센서 helper(`tools/turzx-sensors`)와 설치 스크립트가 바뀌었다. 새 helper를 publish·self-test·검토한 뒤 `setup-sensor-task.ps1`의 고정 manifest 해시를 갱신하고, 두 번째 Windows 사용자 계정의 snapshot 읽기(`BUILTIN\Users` 읽기 ACE)와 예약 작업 재시작 설정을 실제 설치에서 확인한다.
+- Claude CLI 실제 동작 확인이 필요한 항목: `claude auth login --claudeai`가 headless로 URL을 출력하는지(출력하면 UI에 표시해야 함), statusline 명령의 exit code를 Claude Code가 어떻게 처리하는지, Windows에서 `powershell.exe -EncodedCommand` 경유가 비 ASCII statusline 출력을 깨뜨리지 않는지.
