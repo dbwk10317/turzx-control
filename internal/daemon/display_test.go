@@ -36,6 +36,15 @@ type fakeUSB struct {
 	videoErr    error
 	syncErrs    []error
 	closeErr    error
+	restarts    int
+	restartErr  error
+}
+
+func (f *fakeUSB) Restart(context.Context) ([]byte, error) {
+	f.mu.Lock()
+	f.restarts++
+	f.mu.Unlock()
+	return nil, f.restartErr
 }
 
 func (f *fakeUSB) Sync(context.Context) ([]byte, error) {
@@ -268,7 +277,9 @@ func TestRunDisplayOpenFailureReconnects(t *testing.T) {
 }
 
 func TestRunDisplayCancellationClosesVideoAndUSB(t *testing.T) {
-	usb := &fakeUSB{}
+	// A failing restore still has to leave a clean shutdown: the panel keeps
+	// the frozen frame, which is not a daemon error.
+	usb := &fakeUSB{restartErr: errors.New("restart failed")}
 	stream := &fakeStream{}
 	ctx, cancel := context.WithCancel(context.Background())
 	deps := productionDisplayDeps
@@ -282,6 +293,9 @@ func TestRunDisplayCancellationClosesVideoAndUSB(t *testing.T) {
 	}
 	if usb.closed != 1 {
 		t.Fatalf("USB Close calls = %d, want 1", usb.closed)
+	}
+	if usb.restarts != 1 {
+		t.Fatalf("USB Restart calls = %d, want 1 so the panel returns to its firmware screen", usb.restarts)
 	}
 	if stream.closed < 1 {
 		t.Fatalf("stream cleanup = closed %d, want close", stream.closed)

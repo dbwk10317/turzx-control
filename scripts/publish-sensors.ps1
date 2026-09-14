@@ -38,8 +38,11 @@ if ($NoRestore) { $publishArgs += '--no-restore' }
 if ($LASTEXITCODE -ne 0) { throw "Sensor helper publish failed ($LASTEXITCODE)" }
 
 $executable = Join-Path $OutputPath 'turzx-sensors.exe'
-& $executable --self-test
+# Capture the output: the helper is a WinExe, so the shell waits for it only
+# when its output is redirected.
+$selfTest = & $executable --self-test | Out-String
 if ($LASTEXITCODE -ne 0) { throw "Sensor helper self-test failed ($LASTEXITCODE)" }
+Write-Output $selfTest.Trim()
 
 if ($IncludePawnIO) {
     $driversPath = Join-Path $OutputPath 'drivers'

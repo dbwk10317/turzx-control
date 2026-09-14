@@ -108,6 +108,7 @@ type DisplayState struct {
 
 type displayUSB interface {
 	Sync(context.Context) ([]byte, error)
+	Restart(context.Context) ([]byte, error)
 	SendPNG(context.Context, []byte) ([]byte, error)
 	SendH264Stream(context.Context, io.ReadCloser, turzx.VideoOptions, time.Duration) (turzx.VideoReport, error)
 	Close() error
@@ -213,7 +214,16 @@ func runConnection(ctx context.Context, opts DisplayOptions, overlay, fallbackOv
 	if _, err := device.Sync(ctx); err != nil {
 		return fmt.Errorf("USB 동기화 실패: %w", errors.Join(err, device.Close()))
 	}
-	err = errors.Join(runConnected(ctx, opts, overlay, fallbackOverlay, device, onState, deps, budget, markSuccess), device.Close())
+	runErr := runConnected(ctx, opts, overlay, fallbackOverlay, device, onState, deps, budget, markSuccess)
+	if ctx.Err() != nil {
+		// The panel holds the last uploaded frame, so shutdown hands it back
+		// to the firmware screen. ctx is already canceled here, and a failure
+		// only leaves the frozen frame, so the result is not joined into err.
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), opts.Timeout)
+		_, _ = device.Restart(restoreCtx)
+		cancel()
+	}
+	err = errors.Join(runErr, device.Close())
 	if err != nil {
 		return fmt.Errorf("표시 연결 끊김: %w", err)
 	}

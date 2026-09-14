@@ -114,15 +114,37 @@ powershell.exe -NoProfile -File .\scripts\setup-sensor-task.ps1 `
 publish는 거부한다. 새 빌드는 검토·self-test 후 설치 스크립트의 고정 해시를 갱신해야
 하며, 실행 시 계산한 해시를 그대로 신뢰하도록 바꾸지 않는다.
 
-설치 시 UAC를 한 번 승인하면 helper가 보호된 `Program Files` 하위에 복사되고,
-`ProgramData\TURZXControl\Sensors\<현재 사용자 SID>\snapshot.json`을 갱신하는
-로그온 예약 작업이 등록된다. 작업은 최고 권한·대화형 사용자 토큰으로 실행되며 이후
+`-InstallRoot`를 주면 helper와 snapshot을 관리자가 고른 한 디렉터리 아래로 모은다.
+`-AppDirectory`를 함께 주면 컨트롤 앱 payload도 같은 루트에 설치한다. 압축을 푼
+자리에서 그대로 실행하는 포터블 사용도 그대로 가능하며, 이 옵션은 설치 위치를
+한 곳으로 모으고 싶을 때만 쓴다.
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\setup-sensor-task.ps1 `
+  -Action Install -HelperDirectory .\artifacts\sensors-task-<date> `
+  -AppDirectory .\bin -InstallRoot D:\TURZX
+```
+
+이때 helper는 `<루트>\Sensors\<버전>`, snapshot은 `<루트>\Data\Sensors\<SID>`,
+앱은 `<루트>\App`에 놓인다. 앱 디렉터리도 관리자 소유 보호 디렉터리이므로
+표준 사용자는 실행만 할 수 있고, 앱을 갱신하려면 설치를 다시 실행해 UAC를 승인해야
+한다. 앱 payload는 사용자 권한으로 실행하므로 helper와 달리 해시를 고정하지 않는다.
+설치 후 출력의 `app` 경로가 실제 실행 파일이며, 로그인 자동 시작은 그 실행 파일로
+등록한다. 루트와 그 상위 디렉터리는 관리자 소유여야 하며, 비관리자가 교체할 수 있는
+상위가 있으면 설치를 거부한다. 데몬도 같은 규칙으로 snapshot을 검증하므로 경로만
+바뀌고 신뢰 조건은 같다. 없는 상위 디렉터리는 관리자가 먼저 만들어야 한다.
+
+설치 시 UAC를 한 번 승인하면 helper가 보호된 디렉터리(기본값 `Program Files` 하위)에
+복사되고, 기본값 기준 `ProgramData\TURZXControl\Sensors\<현재 사용자 SID>\snapshot.json`을
+갱신하는 로그온 예약 작업이 등록된다. 작업은 최고 권한·대화형 사용자 토큰으로 실행되며 이후
 로그온마다 자동 시작한다. 컨트롤은 관리자 권한을 요구하지 않고 보호된 snapshot만
 읽는다. snapshot은 소유자·DACL·재분석 지점·신선도를 검증한다.
 
 `-IncludePawnIO`를 사용한 publish는 고정 SHA256과 Authenticode 서명을 확인하고
-설치 파일을 동봉할 뿐, 드라이버를 자동 설치하지 않는다. 제거는 예약 작업을 해제하며
-공유 드라이버와 보호된 바이너리는 의도적으로 보존한다.
+설치 파일을 동봉할 뿐, 드라이버를 자동 설치하지 않는다. 제거는 예약 작업을 해제하고
+이 스크립트가 설치한 helper·앱·snapshot 디렉터리를 지우며 비게 된 상위 디렉터리까지
+정리한다. 다른 앱과 공유하는 PawnIO 드라이버는 건드리지 않는다. 사용자 지정 루트에
+설치했다면 제거할 때도 같은 `-InstallRoot`를 준다.
 
 컨트롤 자체의 사용자 로그인 자동 시작은 다음과 같이 관리한다. `settings.json`이
 있으면 등록 전에 그 내용을 검증하므로, 실행 옵션을 바꿨다면 먼저 `-save-config`로

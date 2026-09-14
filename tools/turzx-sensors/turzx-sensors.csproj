@@ -1,7 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe, not Exe: the logon scheduled task runs this helper with an
+         interactive token, and a console subsystem binary shows a black console
+         window for as long as it publishes snapshots. Redirected stdin and
+         stdout still work, so the stdio and self test modes are unaffected;
+         callers must capture the output so the shell waits for the process. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>

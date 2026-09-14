@@ -7,30 +7,50 @@
 param(
     [ValidateSet('Install', 'Remove', 'Status')][string]$Action = 'Status',
     [string]$HelperDirectory,
+    [string]$AppDirectory,
+    [string]$InstallRoot,
     [string]$UserSid = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value),
     [switch]$ValidateOnly,
     [switch]$ElevatedStage
 )
 
 $ErrorActionPreference = 'Stop'
-# Pinned, locally built development helper (artifacts/sensors-task-20260914).
+# Pinned, locally built development helper (artifacts/sensors-task-20260914-owner).
 # Update only after reviewing and verifying a new self-contained publish. The
 # installer script itself must come from the trusted source checkout/package.
-$expectedManifestHash = 'bfec915a2105ecece1bc1b3c3b959e0141532bcfbcfdd79260509ff0517fe8c9'
+$expectedManifestHash = '4506f5ac9081459eb939414f31d453167288395f0ed716f5de8ef8365fbcea3e'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $sid = [Security.Principal.SecurityIdentifier]::new($UserSid)
 if ($sid.Value -ne $identity.User.Value) { throw 'Run setup as the same Windows user that runs TURZX Control; the elevated identity must be that user''s own administrator (split) token, not another administrator account, because the task runs under the caller''s SID.' }
 $taskName = 'TURZX Sensors ' + $sid.Value
-$programRoot = Join-Path $env:ProgramFiles 'TURZXControl'
-$dataRoot = Join-Path $env:ProgramData 'TURZXControl'
+# Import first: the root checks below need the module's assertions.
+# Assert-NoReparse, Assert-ProtectedDirectory, Assert-TrustedAncestors, New-ProtectedDirectory, $adminSid, $systemSid, $usersSid.
+Import-Module "$PSScriptRoot\sensor-acl.psm1" -Force
+if ($InstallRoot) {
+    # One administrator-chosen root holds the helper and the snapshot. The app
+    # itself stays portable and is never installed here.
+    $InstallRoot = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
+    if ($InstallRoot -eq [IO.Path]::GetPathRoot($InstallRoot).TrimEnd('\')) { throw 'InstallRoot must be a directory, not a volume root.' }
+    Assert-NoReparse $InstallRoot
+    # An ancestor that an untrusted principal can replace defeats the protected
+    # DACL below, so the daemon would reject the snapshot at runtime anyway.
+    Assert-TrustedAncestors $InstallRoot
+    $programRoot = $InstallRoot
+    $dataRoot = Join-Path $InstallRoot 'Data'
+} else {
+    $programRoot = Join-Path $env:ProgramFiles 'TURZXControl'
+    $dataRoot = Join-Path $env:ProgramData 'TURZXControl'
+}
 $sensorRoot = Join-Path $programRoot 'Sensors'
 $userData = Join-Path (Join-Path $dataRoot 'Sensors') $sid.Value
 $snapshotPath = Join-Path $userData 'snapshot.json'
 $recordPath = Join-Path $userData 'installation.json'
-# Assert-NoReparse, Assert-ProtectedDirectory, New-ProtectedDirectory, $adminSid, $systemSid, $usersSid.
-Import-Module "$PSScriptRoot\sensor-acl.psm1" -Force
+# The control app is optional here and runs as the user, never elevated. It is
+# installed only to keep one directory per installation; the reviewed-publish
+# hash pin below covers the elevated helper alone.
+$appRoot = Join-Path $programRoot 'App'
 
 function Get-OwnedTask {
     $queryErrors = @()
@@ -85,6 +105,11 @@ function Get-OwnedTask {
 function Show-Status {
     $task = Get-OwnedTask
     $result = [ordered]@{ task_name = $taskName; registered = [bool]$task; snapshot = $snapshotPath }
+    if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+        Assert-NoReparse $recordPath
+        $installed = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($installed.app) { $result.app = $installed.app.executable }
+    }
     if ($task) {
         $result.state = [string]$task.State
         $result.last_result = (Get-ScheduledTaskInfo -TaskName $taskName -TaskPath '\').LastTaskResult
@@ -117,6 +142,18 @@ trap {
 if ($Action -eq 'Status') { Show-Status; return }
 
 $files = @()
+$appFiles = @()
+if ($Action -eq 'Install' -and $AppDirectory) {
+    $AppDirectory = (Resolve-Path -LiteralPath $AppDirectory).Path.TrimEnd('\')
+    Assert-NoReparse $AppDirectory
+    foreach ($entry in Get-ChildItem -LiteralPath $AppDirectory -Recurse -Force) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "App payload contains a reparse point: $($entry.FullName)" }
+        if (-not $entry.PSIsContainer) {
+            $appFiles += [pscustomobject]@{ relative = $entry.FullName.Substring($AppDirectory.Length + 1); sha256 = (Get-FileHash -LiteralPath $entry.FullName -Algorithm SHA256).Hash }
+        }
+    }
+    if ('turzx-control.exe' -notin $appFiles.relative) { throw 'App payload is missing turzx-control.exe' }
+}
 if ($Action -eq 'Install') {
     if (-not $HelperDirectory) { throw 'Install requires -HelperDirectory with a self-contained sensor publish directory.' }
     $HelperDirectory = (Resolve-Path -LiteralPath $HelperDirectory).Path.TrimEnd('\')
@@ -141,18 +178,20 @@ if ($Action -eq 'Install') {
 
 # Read-only checks end here; -ValidateOnly reports the hash pin instead of enforcing it.
 if ($ValidateOnly) {
-    [ordered]@{ action = $Action; task_name = $taskName; source = $HelperDirectory; destination = $destination; snapshot = $snapshotPath; file_count = $files.Count; manifest_hash = $manifestHash; manifest_pinned = ($Action -ne 'Install' -or $manifestHash -eq $expectedManifestHash); elevation_required = -not $administrator } | ConvertTo-Json
+    [ordered]@{ action = $Action; task_name = $taskName; install_root = $programRoot; source = $HelperDirectory; destination = $destination; snapshot = $snapshotPath; file_count = $files.Count; app = $(if ($AppDirectory) { Join-Path $appRoot 'turzx-control.exe' } else { $null }); app_file_count = $appFiles.Count; manifest_hash = $manifestHash; manifest_pinned = ($Action -ne 'Install' -or $manifestHash -eq $expectedManifestHash); elevation_required = -not $administrator } | ConvertTo-Json
     return
 }
 if ($Action -eq 'Install' -and $manifestHash -ne $expectedManifestHash) { throw 'Helper differs from the pinned, reviewed development publish; refusing installation.' }
 
 if (-not $administrator) {
     if ($ElevatedStage) { throw 'Administrator approval was not granted.' }
-    foreach ($arg in @($PSCommandPath, $HelperDirectory)) {
+    foreach ($arg in @($PSCommandPath, $HelperDirectory, $AppDirectory, $InstallRoot)) {
         if ($arg -and $arg.IndexOfAny([char[]]"`"`r`n") -ge 0) { throw 'Unsupported setup path characters.' }
     }
     $arguments = '-NoProfile -File "' + $PSCommandPath + '" -Action ' + $Action + ' -UserSid ' + $sid.Value + ' -ElevatedStage'
     if ($HelperDirectory) { $arguments += ' -HelperDirectory "' + $HelperDirectory + '"' }
+    if ($AppDirectory) { $arguments += ' -AppDirectory "' + $AppDirectory + '"' }
+    if ($InstallRoot) { $arguments += ' -InstallRoot "' + $InstallRoot + '"' }
     # The current host (powershell.exe 5.1 or pwsh.exe 7) re-runs this script elevated.
     $child = Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     if ($child.ExitCode -ne 0) {
@@ -171,19 +210,47 @@ if (-not $administrator) {
 
 if ($Action -eq 'Remove') {
     $task = Get-OwnedTask
+    $installed = $null
+    if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+        Assert-ProtectedDirectory $userData
+        Assert-NoReparse $recordPath
+        $installed = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
     if ($task) {
         Stop-ScheduledTask -TaskName $taskName -TaskPath '\'
         Unregister-ScheduledTask -TaskName $taskName -TaskPath '\' -Confirm:$false
     }
-    # Shared driver and protected binaries are intentionally retained.
+    # Everything below was created by this script inside an administrator-owned
+    # root, so removal deletes it; the shared PawnIO driver is never touched.
+    $installedDirs = @()
+    if ($installed.app) { $installedDirs += $installed.app.directory }
+    if ($installed.executable) { $installedDirs += (Split-Path -Parent $installed.executable) }
+    $installedDirs += $userData
+    foreach ($dir in $installedDirs) {
+        if ($dir -and (Test-Path -LiteralPath $dir)) {
+            Assert-ProtectedDirectory $dir
+            Remove-Item -LiteralPath $dir -Recurse -Force
+        }
+    }
+    # Prune this script's own parents once they hold nothing else; another
+    # Windows user's installation keeps them alive.
+    foreach ($dir in @($sensorRoot, (Join-Path $dataRoot 'Sensors'), $dataRoot, $programRoot)) {
+        if ((Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force)) { Remove-Item -LiteralPath $dir -Force }
+    }
     Show-Status
     return
 }
 
 # Every executable and output parent is administrator-owned before task registration.
-foreach ($dir in @($programRoot, $sensorRoot, $destination)) { New-ProtectedDirectory $dir $sid }
-# Shared parents are readable by all users so a second Windows user's daemon passes the parent checks.
-foreach ($dir in @($dataRoot, (Join-Path $dataRoot 'Sensors'))) { New-ProtectedDirectory $dir $usersSid }
+# Shared parents are readable by all users so a second Windows user's daemon
+# passes the parent checks; a custom root is itself such a parent. They are
+# created first because the owner-only directories live under them.
+$sharedDirs = @($dataRoot, (Join-Path $dataRoot 'Sensors'))
+if ($InstallRoot) { $sharedDirs = @($programRoot) + $sharedDirs }
+foreach ($dir in $sharedDirs) { New-ProtectedDirectory $dir $usersSid }
+$ownerDirs = @($sensorRoot, $destination)
+if (-not $InstallRoot) { $ownerDirs = @($programRoot) + $ownerDirs }
+foreach ($dir in $ownerDirs) { New-ProtectedDirectory $dir $sid }
 New-ProtectedDirectory $userData $sid
 $existingTask = Get-OwnedTask
 if ($existingTask) { throw 'Remove the existing sensor task before installing a different version.' }
@@ -198,6 +265,24 @@ foreach ($file in $files) {
 $executable = Join-Path $destination 'turzx-sensors.exe'
 & $executable --self-test | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Protected sensor helper self-test failed.' }
+if ($AppDirectory) {
+    # One stable directory keeps the installed executable path, and any autostart
+    # entry pointing at it, valid across updates, so an existing install is
+    # replaced outright instead of being left with stale files.
+    if (Test-Path -LiteralPath $appRoot) {
+        Assert-ProtectedDirectory $appRoot
+        Remove-Item -LiteralPath $appRoot -Recurse -Force
+    }
+    New-ProtectedDirectory $appRoot $usersSid
+    foreach ($file in $appFiles) {
+        $target = Join-Path $appRoot $file.relative
+        $parent = Split-Path -Parent $target
+        Assert-NoReparse $target
+        if (-not (Test-Path -LiteralPath $parent)) { [IO.Directory]::CreateDirectory($parent) | Out-Null }
+        Copy-Item -LiteralPath (Join-Path $AppDirectory $file.relative) -Destination $target
+        if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $file.sha256) { throw "Protected app file hash mismatch: $target" }
+    }
+}
 $scheduler = New-Object -ComObject Schedule.Service
 $scheduler.Connect()
 $definition = $scheduler.NewTask(0)
@@ -220,6 +305,7 @@ $definition.Settings.MultipleInstances = 2 # TASK_INSTANCES_IGNORE_NEW
 $definition.Settings.RestartCount = 3
 $definition.Settings.RestartInterval = 'PT1M'
 $record = [ordered]@{ schema_version = 1; user_sid = $sid.Value; task_name = $taskName; executable = $executable; snapshot = $snapshotPath; files = $files }
+if ($AppDirectory) { $record.app = [ordered]@{ directory = $appRoot; executable = (Join-Path $appRoot 'turzx-control.exe'); files = $appFiles } }
 Assert-NoReparse $recordPath
 $record | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $recordPath -Encoding UTF8
 $createdTask = $false
@@ -232,6 +318,17 @@ try {
     Get-OwnedTask | Out-Null
     $registered.Enabled = $true
     Start-ScheduledTask -TaskName $taskName -TaskPath '\'
+    # The helper is a WinExe and publishes no console output, so a helper that
+    # starts and then fails every write is only visible here. Require a fresh
+    # snapshot; the catch below removes the task when this fails.
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
+        $taskInfo = Get-ScheduledTask -TaskName $taskName -TaskPath '\' | Get-ScheduledTaskInfo
+        throw "Sensor helper started but wrote no snapshot within 15s (last task result $($taskInfo.LastTaskResult))."
+    }
 } catch {
     $installError = $_
     if ($createdTask) {

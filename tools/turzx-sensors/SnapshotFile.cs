@@ -81,14 +81,10 @@ internal static class SnapshotFile
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 created = true;
-                // Explicit owner so the Go reader's owner check holds even under the
-                // NoDefaultAdminOwner policy; File.Move preserves it.
-                var security = new FileSecurity();
-                security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
-                stream.SetAccessControl(security);
                 stream.Write(bytes, 0, bytes.Length);
             }
 
+            EnsureAdministratorOwner(temporary);
             ValidatePath(fullPath);
             File.Move(temporary, fullPath, overwrite: true);
         }
@@ -107,6 +103,27 @@ internal static class SnapshotFile
                 // removes the leftover on the next start after the parent is inspected.
             }
         }
+    }
+
+    // The Go reader requires an Administrators or SYSTEM owner, which an
+    // elevated writer already gets from the default Windows policy; the owner is
+    // rewritten only under the NoDefaultAdminOwner policy. It is set on the
+    // closed file because a write handle carries no WRITE_OWNER right, while the
+    // inherited Administrators ACE on the protected directory grants it.
+    // File.Move preserves the owner.
+    private static void EnsureAdministratorOwner(string path)
+    {
+        var file = new FileInfo(path);
+        var owner = file.GetAccessControl(AccessControlSections.Owner).GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        if (owner is not null &&
+            (owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid)))
+        {
+            return;
+        }
+
+        var security = new FileSecurity();
+        security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+        file.SetAccessControl(security);
     }
 
     private static bool HasReparsePoint(string path)

@@ -213,6 +213,19 @@ func (u *USB) Sync(ctx context.Context) ([]byte, error) {
 	return response, err
 }
 
+// Restart sends command 11 so the panel drops the host-supplied image and
+// returns to its firmware screen. It is best effort at shutdown: the device
+// may re-enumerate afterwards, so the connection is treated as unsynced.
+func (u *USB) Restart(ctx context.Context) ([]byte, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if err := u.ready(ctx); err != nil {
+		return nil, err
+	}
+	u.synced = false
+	return u.command(ctx, CmdRestart, nil)
+}
+
 // SendPNG validates and uploads a native RGBA PNG after a successful Sync.
 // A successful response does not prove that the panel displayed the image.
 func (u *USB) SendPNG(ctx context.Context, payload []byte) ([]byte, error) {

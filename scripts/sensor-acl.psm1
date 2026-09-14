@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $usersSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+# TrustedInstaller owns the volume root and %ProgramFiles% on a stock install.
+$installerSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
 
 function Assert-NoReparse([string]$Path) {
     $itemPath = [IO.Path]::GetFullPath($Path)
@@ -54,4 +56,36 @@ function New-ProtectedDirectory([string]$Path, [Security.Principal.SecurityIdent
     Assert-ProtectedDirectory $Path
 }
 
-Export-ModuleMember -Function Assert-NoReparse, Assert-ProtectedDirectory, New-ProtectedDirectory -Variable adminSid, systemSid, usersSid
+# Mirrors validateAncestorACL in internal/metric/sensor_snapshot_windows.go: a
+# principal that can replace an ancestor can substitute the whole protected
+# tree, and the daemon refuses such a snapshot at runtime. Rights that only
+# create new entries are fine, and inherit-only ACEs grant nothing here.
+function Assert-TrustedAncestors([string]$Path) {
+    $replace = [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [Security.AccessControl.FileSystemRights]::TakeOwnership -bor
+        [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    $owners = @($adminSid.Value, $systemSid.Value, $installerSid.Value)
+    $current = [IO.Path]::GetFullPath($Path)
+    while ($true) {
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if (-not $parent) { return }
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+            throw "Install root ancestor does not exist; create it as an administrator first: $parent"
+        }
+        Assert-NoReparse $parent
+        $acl = Get-Acl -LiteralPath $parent
+        if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $owners) {
+            throw "Install root ancestor is not owned by an administrator principal: $parent"
+        }
+        foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -ne 'Allow' -or $rule.IdentityReference.Value -in $owners) { continue }
+            if ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
+            if (($rule.FileSystemRights -band $replace) -ne 0) {
+                throw "Install root ancestor lets $($rule.IdentityReference.Value) replace it: $parent"
+            }
+        }
+        $current = $parent
+    }
+}
+
+Export-ModuleMember -Function Assert-NoReparse, Assert-ProtectedDirectory, Assert-TrustedAncestors, New-ProtectedDirectory -Variable adminSid, systemSid, usersSid
