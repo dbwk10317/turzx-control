@@ -71,6 +71,7 @@ func azureDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64, p
 	drawMetric(img, 1278, 230, d.Hardware.GPU.Label, d.Hardware.GPU.Usage, d.Hardware.GPU.Temperature, d.Hardware.GPU.Fraction, blue)
 	drawMetric(img, 1278, 330, d.Hardware.RAM.Label, d.Hardware.RAM.Usage, d.Hardware.RAM.Temperature, d.Hardware.RAM.Fraction, cyan)
 	var encoded bytes.Buffer
+	drawNotice(img, d.Notice)
 	if err := png.Encode(&encoded, img); err != nil {
 		return nil, err
 	}

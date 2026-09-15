@@ -18,6 +18,9 @@ type Dashboard struct {
 	Codex    ProviderDashboard
 	Claude   ProviderDashboard
 	Hardware HardwareDashboard
+	// Notice is a diagnostic line drawn over the finished dashboard, empty in
+	// the normal case. The static PNG path uses it to say why it is running.
+	Notice string
 }
 
 type ProviderDashboard struct {
@@ -178,5 +181,5 @@ func hardwareMetric(label string, usageReading, temp metric.Reading) Metric {
 	return m
 }
 
-func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }
+func clamp(v, lo, hi float64) float64 { return min(hi, max(lo, v)) }
 func finite(v float64) bool           { return !math.IsNaN(v) && !math.IsInf(v, 0) }

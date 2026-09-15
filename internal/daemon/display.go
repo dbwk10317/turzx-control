@@ -176,7 +176,11 @@ func runDisplay(ctx context.Context, opts DisplayOptions, dashboard func() rende
 		dashboard = func() render.Dashboard { return render.Dashboard{} }
 	}
 	overlay := themeOverlays[opts.Theme](dashboard)
-	fallbackOverlay := render.FallbackOverlay(overlay, fallbackMessage)
+	fallbackOverlay := themeOverlays[opts.Theme](func() render.Dashboard {
+		d := dashboard()
+		d.Notice = fallbackMessage
+		return d
+	})
 	state(onState, "starting", "표시 데몬 시작")
 
 	backoff := time.Second

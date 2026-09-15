@@ -69,6 +69,7 @@ func halloweenDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint6
 	drawHalloweenMetric(img, 1504, d.Hardware.GPU.Label, d.Hardware.GPU.Usage, d.Hardware.GPU.Temperature, d.Hardware.GPU.Fraction, halloweenCyan)
 	drawHalloweenMetric(img, 1690, d.Hardware.RAM.Label, d.Hardware.RAM.Usage, d.Hardware.RAM.Temperature, d.Hardware.RAM.Fraction, halloweenViolet)
 	var encoded bytes.Buffer
+	drawNotice(img, d.Notice)
 	if err := png.Encode(&encoded, img); err != nil {
 		return nil, err
 	}

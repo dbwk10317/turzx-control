@@ -10,16 +10,9 @@ import (
 	"time"
 )
 
-func TestFallbackOverlayAddsStatusBand(t *testing.T) {
-	base := func(time.Duration, uint64) ([]byte, error) {
-		img := image.NewNRGBA(image.Rect(0, 0, landscapeWidth, landscapeHeight))
-		var out bytes.Buffer
-		if err := png.Encode(&out, img); err != nil {
-			return nil, err
-		}
-		return out.Bytes(), nil
-	}
-	data, err := FallbackOverlay(base, "영상 출력 오류 · 정적 화면")(0, 0)
+func renderNotice(t *testing.T, notice string) image.Image {
+	t.Helper()
+	data, err := AzureOverlay(func() Dashboard { return Dashboard{At: time.Unix(0, 0), Notice: notice} })(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,13 +23,27 @@ func TestFallbackOverlayAddsStatusBand(t *testing.T) {
 	if got := img.Bounds(); got != image.Rect(0, 0, landscapeWidth, landscapeHeight) {
 		t.Fatalf("bounds = %v", got)
 	}
-	if r, g, b, a := img.At(40, 410).RGBA(); r == 0 && g == 0 && b == 0 && a == 0 {
-		t.Fatal("status band was not rendered")
+	return img
+}
+
+func TestNoticeBandIsDrawnOnlyWhenSet(t *testing.T) {
+	// The band must change the finished dashboard where it sits and leave the
+	// rest of it alone; an empty notice must change nothing at all.
+	with := renderNotice(t, "영상 출력 오류 · 정적 화면")
+	without := renderNotice(t, "")
+	if with.At(40, 410) == without.At(40, 410) {
+		t.Fatal("notice band was not rendered")
+	}
+	if with.At(40, 100) != without.At(40, 100) {
+		t.Fatal("notice band bled outside its own rows")
 	}
 }
 
-func TestFallbackOverlayRejectsNilBase(t *testing.T) {
-	if _, err := FallbackOverlay(nil, "message")(0, 0); err == nil {
-		t.Fatal("nil base unexpectedly succeeded")
+func TestOverlayRejectsNilSnapshot(t *testing.T) {
+	if _, err := AzureOverlay(nil)(0, 0); err == nil {
+		t.Fatal("nil snapshot unexpectedly succeeded")
+	}
+	if _, err := HalloweenOverlay(nil)(0, 0); err == nil {
+		t.Fatal("nil snapshot unexpectedly succeeded")
 	}
 }
