@@ -21,7 +21,11 @@ import (
 const (
 	profileJSONLimit   = 64 << 10
 	profileOutputLimit = 16 << 10
-	profileSidecar     = ".turzx-statusline.json"
+	// Seconds between timer-driven statusline runs. Long enough not to burden a
+	// forwarded statusline, short enough to stay well inside the five-minute
+	// staleness threshold for Claude.
+	statuslineRefreshSeconds = 60
+	profileSidecar           = ".turzx-statusline.json"
 )
 
 // LoginSession owns the short-lived Claude CLI login process.
@@ -354,6 +358,18 @@ func InstallStatusline(configDir, adapterPath, inboxDir, bindingID string) error
 	command := buildAdapterCommand(adapter, inbox, bindingID, forward)
 	lineObject["type"], _ = json.Marshal("command")
 	lineObject["command"], _ = json.Marshal(command)
+	// Claude Code re-runs the statusline on events, which go quiet while a
+	// session sits idle. Without a timer the usage a session already reported
+	// just ages until someone types. A more frequent interval the user already
+	// chose is kept, so their own statusline does not slow down.
+	interval := statuslineRefreshSeconds
+	if raw, ok := lineObject["refreshInterval"]; ok {
+		var existing int
+		if json.Unmarshal(raw, &existing) == nil && existing > 0 && existing < interval {
+			interval = existing
+		}
+	}
+	lineObject["refreshInterval"], _ = json.Marshal(interval)
 	line, _ := json.Marshal(lineObject)
 	settings["statusLine"] = line
 	data, _ := json.MarshalIndent(settings, "", "  ")

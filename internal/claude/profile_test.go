@@ -228,3 +228,48 @@ func TestProfileStatuslineRoundTripsEmptyAndAbsentSettings(t *testing.T) {
 		})
 	}
 }
+
+// Event-driven statusline runs go quiet while a session is idle, so the install
+// sets a timer. A shorter interval the user already chose is left alone.
+func TestInstallStatuslineSetsRefreshInterval(t *testing.T) {
+	for name, test := range map[string]struct {
+		existing string
+		want     float64
+	}{
+		"no statusline":    {"", statuslineRefreshSeconds},
+		"slower existing":  {`{"type":"command","command":"echo hi","refreshInterval":300}`, statuslineRefreshSeconds},
+		"faster existing":  {`{"type":"command","command":"echo hi","refreshInterval":5}`, 5},
+		"invalid existing": {`{"type":"command","command":"echo hi","refreshInterval":0}`, statuslineRefreshSeconds},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, adapter, inbox := t.TempDir(), filepath.Join(t.TempDir(), "adapter"), t.TempDir()
+			if err := os.WriteFile(adapter, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.existing != "" {
+				settings := []byte(`{"statusLine":` + test.existing + `}`)
+				if err := os.WriteFile(filepath.Join(dir, "settings.json"), settings, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := InstallStatusline(dir, adapter, inbox, "binding"); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings struct {
+				StatusLine struct {
+					RefreshInterval float64 `json:"refreshInterval"`
+				} `json:"statusLine"`
+			}
+			if err := json.Unmarshal(raw, &settings); err != nil {
+				t.Fatal(err)
+			}
+			if settings.StatusLine.RefreshInterval != test.want {
+				t.Fatalf("refreshInterval = %v, want %v", settings.StatusLine.RefreshInterval, test.want)
+			}
+		})
+	}
+}
