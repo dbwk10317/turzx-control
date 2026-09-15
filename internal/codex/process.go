@@ -67,6 +67,7 @@ type Process struct {
 	stderrLog tailBuffer
 
 	expected account // set once by Start before any concurrent use
+
 }
 
 // Start starts executable with --stdio and an explicit, absolute CODEX_HOME.
@@ -393,3 +394,8 @@ func readString(raw json.RawMessage, dst *string) bool {
 	}
 	return json.Unmarshal(raw, dst) == nil
 }
+
+// Account returns the email of the account Start confirmed, for display beside
+// the usage it produced. It is fixed for the life of the process: a mid-read
+// account change fails the read instead of changing this.
+func (p *Process) Account() string { return p.expected.email }

@@ -60,7 +60,9 @@ func azureDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64, p
 	}
 	text(img, true, 478, 104, "AI 에이전트", 18, muted)
 	text(img, true, 478, 146, "CODEX", 30, cyan)
+	text(img, false, 598, 146, accountText(d.Codex.Account, 22), 14, muted)
 	text(img, true, 838, 146, "CLAUDE", 30, blue)
+	text(img, false, 968, 146, accountText(d.Claude.Account, 22), 14, muted)
 	drawQuota(img, 478, 186, "5시간", d.Codex.FiveHour.Value, d.Codex.FiveHour.Reset, d.Codex.FiveHour.Received, d.Codex.FiveHour.Fraction, cyan)
 	drawQuota(img, 478, 310, "주간", d.Codex.Weekly.Value, d.Codex.Weekly.Reset, d.Codex.Weekly.Received, d.Codex.Weekly.Fraction, cyan)
 	drawQuota(img, 838, 186, "5시간", d.Claude.FiveHour.Value, d.Claude.FiveHour.Reset, d.Claude.FiveHour.Received, d.Claude.FiveHour.Fraction, blue)

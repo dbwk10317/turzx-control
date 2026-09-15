@@ -30,6 +30,7 @@ func (a *app) startRuntime(ctx context.Context, display *displaySettings) func()
 			log.Printf("restore Claude account: %v", accountErr)
 		}
 		a.setClaudeAccount(account)
+		a.sources.SetClaudeAccount(account.Label())
 		a.sources.SetClaude(binding)
 		a.setClaudeState("installed", claudeInstalledMessage(account))
 		go a.watchClaudeAccount(ctx)
@@ -87,8 +88,10 @@ func (a *app) stopProvider(provider string) error {
 	if a.sources != nil {
 		if provider == "codex" {
 			a.sources.SetCodex(false)
+			a.sources.SetCodexAccount("")
 		} else {
 			a.sources.SetClaude("")
+			a.sources.SetClaudeAccount("")
 		}
 	}
 	if provider == "claude" {

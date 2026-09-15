@@ -116,3 +116,19 @@ func TestLiveOverlaysReadCallbackAndPreservePNG(t *testing.T) {
 		t.Fatal("nil halloween callback did not fail")
 	}
 }
+
+func TestAccountTextTruncation(t *testing.T) {
+	for name, test := range map[string]struct{ in, want string }{
+		"fits":      {"a@b.com", "a@b.com"},
+		"exact":     {"0123456789", "0123456789"},
+		"truncated": {"01234567890", "012345678…"},
+		"empty":     {"", ""},
+		"multibyte": {"가나다라마바사아자차카", "가나다라마바사아자…"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := accountText(test.in, 10); got != test.want {
+				t.Fatalf("accountText(%q) = %q, want %q", test.in, got, test.want)
+			}
+		})
+	}
+}

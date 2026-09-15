@@ -264,6 +264,7 @@ func (a *app) bindClaude(account claude.Account) error {
 	}
 	a.setClaudeAccount(account)
 	if a.sources != nil {
+		a.sources.SetClaudeAccount(account.Label())
 		a.sources.SetClaude(bindingID)
 	}
 	return nil
@@ -419,6 +420,7 @@ func (a *app) waitForClaudeLogin(session claudeLoginSession, binding string) {
 	closeSession()
 	a.setClaudeAccount(account)
 	if a.sources != nil {
+		a.sources.SetClaudeAccount(account.Label())
 		a.sources.SetClaude(binding)
 	}
 	a.setClaudeState("installed", claudeInstalledMessage(account))

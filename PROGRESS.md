@@ -15,13 +15,11 @@
 - 배포물은 설정 없이 실행하면 `display background is required`로 끝난다. 동봉
   기본값이 없어서다. 실행 파일 옆의 테마·FFmpeg를 기본값으로 잡거나 첫 설정
   UI가 받게 한다. ZIP의 INSTALL.txt는 현재 동작대로 첫 실행 명령을 적어 두었다.
-- 설정 UI가 Claude 사용량이 안 들어오는 이유를 설명하지 못한다. 사용량은 전용
-  프로필로 Claude Code 세션을 실제로 돌려야 statusline hook을 통해 들어오는데,
-  UI는 "새 세션을 기다립니다"라고만 하고 그 세션을 어떻게 시작하는지 알려주지
-  않는다. 전용 프로필로 Claude Code를 여는 버튼이나 명령 안내가 필요하다.
-  2026-09-15에 hook에 합성 payload를 넣어 수집·표시·신선도 전이까지 정상임을
-  확인했다. 새 세션의 첫 statusline은 과거 baseline으로만 읽히고 두 번째부터
-  새 수신으로 인정되는 것도 의도된 동작이다.
+- Claude 사용량은 이제 사용자의 실제 프로필에 hook을 설치해 별도 조작 없이
+  들어온다. 남은 확인: 실제 Claude Code 세션에서 수신·표시, 그리고 계정을 바꿨을 때
+  자동 재바인딩과 이력 초기화. 조직이 관리 설정에 `allowManagedHooksOnly`를 켜면
+  사용자 statusline이 경고 없이 사라지므로, UI가 "설치됨 · 수신 없음"을 구분해
+  보여줘야 한다.
 - `turzx-control.exe -autostart enable|disable|status`는 GUI 서브시스템이라 셸이
   종료를 기다리지 않는다. Run 값은 정확히 등록·삭제되지만, 스크립트나 UI에서
   호출할 때는 완료를 기다려야 한다. 첫 설정 UI가 자동 시작을 다룰 때 반영한다.

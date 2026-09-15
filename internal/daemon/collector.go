@@ -48,7 +48,10 @@ type Sources struct {
 	closed        bool
 	serial        uint64
 	codex, claude *sourceRun
-	hardware      metric.HardwareSnapshot
+	// Account labels shown beside each provider's usage. They are learned after
+	// the binding exists, so they live here rather than in the usage scope key.
+	codexAccount, claudeAccount string
+	hardware                    metric.HardwareSnapshot
 	hardwareDone  chan struct{}
 }
 
@@ -114,10 +117,25 @@ func (s *Sources) replace(provider, binding string, collect func(context.Context
 	go func() { defer close(r.done); collect(ctx, r) }()
 }
 
+// SetCodexAccount records the account whose Codex usage is being collected.
+func (s *Sources) SetCodexAccount(account string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.codexAccount = account
+}
+
+// SetClaudeAccount records the account whose Claude usage is being collected.
+func (s *Sources) SetClaudeAccount(account string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claudeAccount = account
+}
+
 func (s *Sources) Dashboard() render.Dashboard {
 	at := time.Now()
 	s.mu.RLock()
 	c, cl, hardware := s.codex, s.claude, s.hardware
+	codexAccount, claudeAccount := s.codexAccount, s.claudeAccount
 	s.mu.RUnlock()
 	hardware.Readings = append([]metric.Reading(nil), hardware.Readings...)
 	for i := range hardware.Readings {
@@ -133,7 +151,9 @@ func (s *Sources) Dashboard() render.Dashboard {
 			r.State = "stale"
 		}
 	}
-	return render.DashboardFromSnapshots(at, c.model.ViewAt(at).Scopes[c.scope], cl.model.ViewAt(at).Scopes[cl.scope], hardware)
+	dashboard := render.DashboardFromSnapshots(at, c.model.ViewAt(at).Scopes[c.scope], cl.model.ViewAt(at).Scopes[cl.scope], hardware)
+	dashboard.Codex.Account, dashboard.Claude.Account = codexAccount, claudeAccount
+	return dashboard
 }
 
 func (s *Sources) Close() {
@@ -219,6 +239,7 @@ func (s *Sources) codexLoop(ctx context.Context, r *sourceRun) {
 		return
 	}
 	defer process.Close()
+	s.SetCodexAccount(process.Account())
 	delay := 30 * time.Second
 	for ctx.Err() == nil {
 		readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
