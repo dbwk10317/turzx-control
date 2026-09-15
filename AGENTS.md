@@ -6,7 +6,7 @@
 
 TURZX 스마트 스크린용 크로스플랫폼 Go 데몬이다. Windows 네이티브 데몬이 USB, 트레이, 센서, 렌더링을 소유한다. WSL의 프로필이나 센서 값을 선택·병합하지 않는다.
 
-AI 사용량은 Codex는 데몬 전용 프로필에서, Claude는 사용자가 실제로 Claude Code를 실행하는 프로필에 statusline hook을 설치해 수집한다. Claude의 한도·리셋은 statusline payload로만 오고 hook은 등록된 프로필의 세션에서만 실행되므로, 전용 프로필은 아무도 시작하지 않는 세션을 기다리게 된다. hook 설치는 기존 statusline을 보존해 전달하고 해제 때 복원한다. 연결 해제는 hook 제거·복원만 하며 사용자를 Claude Code에서 로그아웃시키지 않는다. 제품 코드가 자격 증명을 직접 해석하지 않으며 설정 UI에서 로그인을 시작한다. 공급자 값은 provider·binding·account identity·generation을 함께 대조하고, 연결 해제·재연결과 계정 변경을 별도 상태로 처리한다. 표시 지표는 각 공급자의 5시간·주간 남은 사용량과 리셋까지의 시간, CPU·GPU·RAM 사용률·온도다. RAM 온도를 지원하지 않으면 식별된 메인보드 온도로 대체하고 실제 출처를 표시한다. 일시적 센서 오류, 미제공 창, stale 값, 인증 오류를 서로 구분하며 과거 값으로 새 관측을 만들지 않는다. reset은 유효한 관측의 리셋 시각 전이로만 갱신한다.
+AI 사용량은 Codex는 데몬 전용 프로필에서, Claude는 사용자가 실제로 Claude Code를 실행하는 프로필에 statusline hook을 설치해 수집한다. Claude의 한도·리셋은 statusline payload로만 오고 hook은 등록된 프로필의 세션에서만 실행되므로, 전용 프로필은 아무도 시작하지 않는 세션을 기다리게 된다. hook 설치는 기존 statusline을 보존해 전달하고 해제 때 복원한다. 연결 해제는 hook 제거·복원만 하며 사용자를 Claude Code에서 로그아웃시키지 않는다. 제품 코드가 자격 증명을 직접 해석하지 않으며 설정 UI에서 로그인을 시작한다. 공급자 값은 provider·binding·account identity·generation을 함께 대조하고, 연결 해제·재연결과 계정 변경을 별도 상태로 처리한다. 표시 지표는 각 공급자의 5시간·주간 남은 사용량과 리셋까지의 시간, CPU·GPU 사용률·온도, RAM 사용률이다. RAM 온도는 다루지 않는다. 일시적 센서 오류, 미제공 창, stale 값, 인증 오류를 서로 구분하며 과거 값으로 새 관측을 만들지 않는다. reset은 유효한 관측의 리셋 시각 전이로만 갱신한다.
 
 하드웨어 수집과 화면 합성은 1초, 공급자 원본 조회는 30초 주기다. 사용량 값은 조회 완료 시 원자적으로 교체하며 화면 재표시는 새 관측이 아니다. 센서 snapshot IPC는 관리자 helper가 고정된 `%ProgramData%\TURZXControl\Sensors\<SID>\snapshot.json`에 기록하고, Go는 protocol·관측 시각·신선도·Elevated·regular/non-reparse 파일·handle 및 ACL을 검증한다. 부모 디렉터리는 보호된 DACL이어야 하고 owner는 `BUILTIN\Administrators` 또는 `SYSTEM`이며 비신뢰 principal의 쓰기·삭제·DACL·owner 권한은 거부한다.
 
@@ -24,7 +24,8 @@ GPL-3.0-or-later를 따른다. 새 소스 파일에는 SPDX 헤더와 필요한 
 - 리셋 시각이 지나면 `갱신 대기`다. 누락·null·사용률 감소만으로 새 창이나 100% 복구를 만들지 않는다. 같은 범위에서 더 뒤의 유효한 리셋 시각과 사용률을 새 관측으로 받아야 해제한다. 처음부터 제공되지 않은 창만 성공 응답의 누락을 `미제공`으로 판정한다. 인증·계정·수집 오류는 원인을 우선 표시하되 같은 연결의 리셋 이력은 보존한다.
 - 남은 비율은 `clamp(100-used_percent, 0, 100)`이며 누락과 0을 구분한다. 음수·비수치·단위 오류는 거부한다. 리셋 잔여 시간은 epoch 기준으로 계산하고 음수를 표시하지 않으며 절전 복귀·시계 변경 때 재계산한다.
 - Codex는 전용 App Server의 `account/rateLimits/read`를 사용하며 대화·모델 호출을 만들지 않는다. 버킷과 실제 창 길이(300분·10080분)를 검사하고 다른 버킷으로 조용히 대체하지 않는다. Claude는 공식 statusline 허용 필드만 저장하고 기존 출력을 보존·복원한다. 인증 파일 파싱, 내부 OAuth 엔드포인트, TUI 스크래핑은 사용하지 않는다. 유휴 Claude의 실시간 갱신은 보장하지 않는다.
-- 센서는 ID로 선택하며 RAM 미지원이 확인된 경우에만 사용자가 식별한 메인보드 온도로 대체한다. ACPI 서멀존을 CPU 온도로, 임의 VRM·칩셋을 RAM 온도로 바꾸지 않는다. 권한·드라이버 부족은 미지원과 구분한다. helper는 센서 읽기만 수행하고 수집 오류는 항목별로 격리한다.
+- 센서는 ID로 선택한다. ACPI 서멀존을 CPU 온도로 바꾸지 않는다. 권한·드라이버 부족은 미지원과 구분한다. helper는 센서 읽기만 수행하고 수집 오류는 항목별로 격리한다.
+- helper는 LibreHardwareMonitor의 메모리 그룹을 켜지 않는다(`IsMemoryEnabled = false`). 그 그룹은 DIMM 열센서를 SMBus로 찾는데, 이 경로가 helper를 무기한 블록시키고 머신을 멈춘 적이 있다. RAM 사용률은 helper가 아니라 데몬이 OS에서 직접 읽으므로 잃는 것이 없다. 다시 켜지 않는다.
 
 ## 렌더링·장치·배포
 

@@ -44,9 +44,6 @@ func (c liveDataConfig) validate(theme string) error {
 	if !filepath.IsAbs(c.ClaudeInboxDir) {
 		return errors.New("-claude-inbox-dir must be an absolute path")
 	}
-	if err := c.Selection.Validate(); err != nil {
-		return err
-	}
 	if strings.TrimSpace(c.SensorHelper) == "" && c.Selection != (metric.HardwareSensorSelection{}) {
 		return errors.New("sensor selection requires -sensor-helper")
 	}

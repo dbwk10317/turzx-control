@@ -69,7 +69,6 @@
     {"id":"gpu-bar","region":"hw_monitor","kind":"bar","source":"gpu.usage","bounds":{"x":214,"y":146,"width":158,"height":4},"color":"cyan"},
     {"id":"ram-label","region":"hw_monitor","kind":"text","text":"RAM","bounds":{"x":400,"y":63,"width":60,"height":20},"size":16,"color":"muted"},
     {"id":"ram-usage","region":"hw_monitor","kind":"text","source":"ram.usage","bounds":{"x":400,"y":99,"width":80,"height":32},"font":"pretendard.semibold","size":30,"color":"ink"},
-    {"id":"ram-temperature","region":"hw_monitor","kind":"text","source":"ram.temperature","bounds":{"x":400,"y":127,"width":80,"height":24},"size":20,"color":"violet"},
     {"id":"ram-bar","region":"hw_monitor","kind":"bar","source":"ram.usage","bounds":{"x":400,"y":146,"width":158,"height":4},"color":"violet"}
   ]
 }

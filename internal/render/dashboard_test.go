@@ -65,15 +65,15 @@ func TestDashboardQuotaAllUnavailableStatuses(t *testing.T) {
 	}
 }
 
-func TestDashboardHardwareNullAndFallback(t *testing.T) {
-	usageValue, tempValue := 55.4, 62.2
+func TestDashboardHardwareNullAndMemoryHasNoTemperature(t *testing.T) {
+	usageValue := 55.4
 	d := DashboardFromSnapshots(time.Now(), usage.ScopeView{}, usage.ScopeView{}, metric.HardwareSnapshot{Readings: []metric.Reading{
 		{ID: "ram.usage", State: "ok", Value: &usageValue},
-		{ID: "ram.temperature", State: "ok", Value: &tempValue, Label: "메인보드 온도"},
 		{ID: "gpu.usage", State: "error", Value: &usageValue},
 	}})
-	if d.Hardware.RAM.Label != "RAM · 메인보드" || d.Hardware.RAM.Usage != "55%" || d.Hardware.RAM.Temperature != "62°C" || d.Hardware.RAM.Fraction < .5539 || d.Hardware.RAM.Fraction > .5541 {
-		t.Fatalf("ram fallback = %+v", d.Hardware.RAM)
+	// Empty, not "—": memory has no temperature to report and must not imply one.
+	if d.Hardware.RAM.Label != "RAM" || d.Hardware.RAM.Usage != "55%" || d.Hardware.RAM.Temperature != "" || d.Hardware.RAM.Fraction < .5539 || d.Hardware.RAM.Fraction > .5541 {
+		t.Fatalf("ram = %+v", d.Hardware.RAM)
 	}
 	if d.Hardware.CPU.Usage != "—" || d.Hardware.CPU.Temperature != "—" || d.Hardware.GPU.Usage != "—" {
 		t.Fatalf("null hardware = %+v %+v", d.Hardware.CPU, d.Hardware.GPU)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+﻿// SPDX-License-Identifier: GPL-3.0-or-later
 // Sensor gathering logic uses public LibreHardwareMonitorLib APIs only.
 
 using System.Text;
@@ -133,7 +133,12 @@ internal static class Program
             IsCpuEnabled = driverState.IsWindows && driverState.Elevated && driverState.IsInstalled,
             IsGpuEnabled = true,
             IsMotherboardEnabled = driverState.IsWindows && driverState.Elevated && driverState.IsInstalled,
-            IsMemoryEnabled = driverState.IsWindows && driverState.Elevated && driverState.IsInstalled,
+            // Never. LibreHardwareMonitor's memory group reaches for DIMM thermal
+            // sensors over the SMBus (RAMSPDToolkit), which blocks indefinitely
+            // here and has wedged the machine. The only memory sensors it ever
+            // returned were load figures the daemon already reads from the OS
+            // with no driver at all, so nothing is lost by leaving this off.
+            IsMemoryEnabled = false,
             IsStorageEnabled = false,
             IsNetworkEnabled = false,
             IsControllerEnabled = false

@@ -77,9 +77,6 @@ func normalizeDisplaySettings(value displaySettings) (displaySettings, error) {
 			return displaySettings{}, errors.New("sensor-helper and sensor-snapshot are mutually exclusive")
 		}
 	}
-	if err := value.Selection.Validate(); err != nil {
-		return displaySettings{}, err
-	}
 	if value.SensorHelper == "" && value.SensorSnapshot == "" && value.Selection != (metric.HardwareSensorSelection{}) {
 		return displaySettings{}, errors.New("sensor selection requires sensor helper or snapshot")
 	}
@@ -104,15 +101,12 @@ func displayFlags(flags *flag.FlagSet, saved *displaySettings) func() *displaySe
 	cpu := flags.String("cpu-temperature-sensor", value.Selection.CPUTemperatureSensor, "CPU temperature sensor ID")
 	gpuUsage := flags.String("gpu-usage-sensor", value.Selection.GPUUsageSensor, "GPU usage sensor ID")
 	gpuTemp := flags.String("gpu-temperature-sensor", value.Selection.GPUTemperatureSensor, "GPU temperature sensor ID")
-	ram := flags.String("ram-temperature-sensor", value.Selection.RAMTemperatureSensor, "RAM temperature sensor ID")
-	board := flags.String("motherboard-temperature-sensor", value.Selection.MotherboardTemperatureSensor, "motherboard temperature sensor ID")
-	ramUnsupported := flags.Bool("ram-temperature-unsupported", value.Selection.RAMTemperatureUnsupported, "use motherboard fallback for RAM temperature")
 	return func() *displaySettings {
 		if strings.TrimSpace(*background) == "" {
 			return nil
 		}
 		return &displaySettings{Background: *background, FFmpeg: *ffmpeg, Theme: *theme, Brightness: *brightness, ChunkWait: *chunkWait, SensorHelper: *sensorHelper, SensorSnapshot: *sensorSnapshot,
-			Selection: metric.HardwareSensorSelection{CPUTemperatureSensor: *cpu, GPUUsageSensor: *gpuUsage, GPUTemperatureSensor: *gpuTemp, RAMTemperatureSensor: *ram, MotherboardTemperatureSensor: *board, RAMTemperatureUnsupported: *ramUnsupported}}
+			Selection: metric.HardwareSensorSelection{CPUTemperatureSensor: *cpu, GPUUsageSensor: *gpuUsage, GPUTemperatureSensor: *gpuTemp}}
 	}
 }
 

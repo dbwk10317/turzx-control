@@ -32,7 +32,7 @@ func TestDisplayHardwareIntegration(t *testing.T) {
 	defer cancel()
 	opts := SourceOptions{SensorHelper: os.Getenv("TURZX_INTEGRATION_SENSOR_HELPER")}
 	if opts.SensorHelper != "" {
-		opts.Selection = metric.HardwareSensorSelection{GPUUsageSensor: "/gpu-nvidia/0/load/0", GPUTemperatureSensor: "/gpu-nvidia/0/temperature/0", RAMTemperatureUnsupported: true}
+		opts.Selection = metric.HardwareSensorSelection{GPUUsageSensor: "/gpu-nvidia/0/load/0", GPUTemperatureSensor: "/gpu-nvidia/0/temperature/0"}
 	}
 	sources := NewSources(ctx, opts, nil)
 	defer sources.Close()

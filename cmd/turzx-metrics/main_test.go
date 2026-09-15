@@ -33,8 +33,6 @@ func TestInvalidSensorFlagCombinations(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "ram_and_unsupported", args: []string{"-ram-temperature-sensor", "/ram", "-ram-temperature-unsupported"}},
-		{name: "motherboard_without_unsupported", args: []string{"-motherboard-temperature-sensor", "/mb"}},
 		{name: "list_without_helper", args: []string{"-list-sensors"}},
 		{name: "selection_without_helper", args: []string{"-gpu-usage-sensor", "/gpu"}},
 	}

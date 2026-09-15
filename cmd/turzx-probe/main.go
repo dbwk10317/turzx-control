@@ -49,9 +49,6 @@ func run(args []string) error {
 	cpuTemperatureSensor := flags.String("cpu-temperature-sensor", "", "helper sensor ID for CPU temperature")
 	gpuUsageSensor := flags.String("gpu-usage-sensor", "", "helper sensor ID for GPU usage")
 	gpuTemperatureSensor := flags.String("gpu-temperature-sensor", "", "helper sensor ID for GPU temperature")
-	ramTemperatureSensor := flags.String("ram-temperature-sensor", "", "helper sensor ID for RAM temperature")
-	motherboardTemperatureSensor := flags.String("motherboard-temperature-sensor", "", "helper motherboard sensor ID used when RAM fallback is enabled")
-	ramTemperatureUnsupported := flags.Bool("ram-temperature-unsupported", false, "disable RAM temperature and use motherboard fallback when configured")
 	ffmpeg := flags.String("ffmpeg", "ffmpeg", "FFmpeg executable for the live diagnostic")
 	duration := flags.Duration("duration", 30*time.Second, "live diagnostic duration")
 	chunkWait := flags.Duration("chunk-wait", 3*time.Second, "live chunk assembly and queue wait limit")
@@ -94,9 +91,7 @@ func run(args []string) error {
 			SensorHelper: *sensorHelper,
 			Selection: metric.HardwareSensorSelection{
 				CPUTemperatureSensor: *cpuTemperatureSensor, GPUUsageSensor: *gpuUsageSensor,
-				GPUTemperatureSensor: *gpuTemperatureSensor, RAMTemperatureSensor: *ramTemperatureSensor,
-				MotherboardTemperatureSensor: *motherboardTemperatureSensor,
-				RAMTemperatureUnsupported:    *ramTemperatureUnsupported,
+				GPUTemperatureSensor: *gpuTemperatureSensor,
 			},
 		}
 		if err := liveCfg.validate(*theme); err != nil {

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
 # Install a protected, read-only sensor publisher. Never elevate the control app.
 # Run as the Windows user that runs TURZX Control. The UAC prompt must be answered
 # with that same user's administrator (split) token: the task runs under the
@@ -15,12 +15,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Set when the installed helper did not produce a snapshot; reported by Show-Status.
+$snapshotWarning = ''
 # Pinned, locally built and signed development helper
-# (artifacts/sensors-task-20260914-owner). Signing changes the files, so this
-# hash must be recomputed after every signing pass.
+# (artifacts/sensors-memoff-20260915: the first build with LibreHardwareMonitor's
+# memory group off, so no DIMM thermal sensor is read over the SMBus). Signing
+# changes the files, so this hash must be recomputed after every signing pass.
 # Update only after reviewing and verifying a new self-contained publish. The
 # installer script itself must come from the trusted source checkout/package.
-$expectedManifestHash = '85e5ebdc478761b3ca1678885e4942c6226de64ce82ac1d012e572d0be3c9cba'
+$expectedManifestHash = '72281b59253cb6775b4ae41e6f843c0e3f653519deb11cb157507179bba1bbcd'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -53,6 +56,12 @@ $recordPath = Join-Path $userData 'installation.json'
 # installed only to keep one directory per installation; the reviewed-publish
 # hash pin below covers the elevated helper alone.
 $appRoot = Join-Path $programRoot 'App'
+
+# Helper processes running the executable this installation owns.
+function Get-HelperProcess([string]$Executable) {
+    return @(Get-Process -Name 'turzx-sensors' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and [StringComparer]::OrdinalIgnoreCase.Equals($_.Path, $Executable) })
+}
 
 function Get-OwnedTask {
     $queryErrors = @()
@@ -123,6 +132,7 @@ function Show-Status {
         $result.driver_installed = $snapshot.driver_installed
         $result.observed_at = $snapshot.observed_at
     }
+    if ($script:snapshotWarning) { $result.warning = $script:snapshotWarning }
     $result | ConvertTo-Json
 }
 
@@ -222,8 +232,29 @@ if ($Action -eq 'Remove') {
         Stop-ScheduledTask -TaskName $taskName -TaskPath '\'
         Unregister-ScheduledTask -TaskName $taskName -TaskPath '\' -Confirm:$false
     }
+    # Stopping the task does not wait for the helper to exit, and the DLLs it
+    # still has loaded cannot be deleted until it does.
+    if ($installed.executable) {
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline) {
+            if (-not (Get-HelperProcess $installed.executable)) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        # The task is unregistered by now, so a stubborn helper cannot come back.
+        foreach ($leftover in Get-HelperProcess $installed.executable) {
+            Stop-Process -Id $leftover.Id -Force -ErrorAction SilentlyContinue
+        }
+        while ((Get-Date) -lt $deadline.AddSeconds(5)) {
+            if (-not (Get-HelperProcess $installed.executable)) { break }
+            Start-Sleep -Milliseconds 500
+        }
+    }
     # Everything below was created by this script inside an administrator-owned
     # root, so removal deletes it; the shared PawnIO driver is never touched.
+    # The diagnostics file a previous failed elevated run left behind is ours,
+    # and leaving it would keep the root from being pruned.
+    $errorFile = Join-Path $dataRoot ('setup-error-' + $sid.Value + '.txt')
+    if (Test-Path -LiteralPath $errorFile -PathType Leaf) { Remove-Item -LiteralPath $errorFile -Force }
     $installedDirs = @()
     if ($installed.app) { $installedDirs += $installed.app.directory }
     if ($installed.executable) { $installedDirs += (Split-Path -Parent $installed.executable) }
@@ -321,16 +352,39 @@ try {
     $registered.Enabled = $true
     Start-ScheduledTask -TaskName $taskName -TaskPath '\'
     # The helper is a WinExe and publishes no console output, so a helper that
-    # starts and then fails every write is only visible here. Require a fresh
-    # snapshot; the catch below removes the task when this fails.
-    $deadline = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
+    # starts and then fails every write is only visible here. Require a real
+    # snapshot; the catch below removes the task when this fails. The first
+    # hardware enumeration is slow on a cold machine, so allow for that while
+    # still failing at once when the helper has actually exited.
+    $taskRunning = 267009 # SCHED_S_TASK_RUNNING
+    # A leftover snapshot from an earlier run would make mere existence
+    # meaningless, so require one this task wrote.
+    $startedAt = Get-Date
+    $deadline = $startedAt.AddSeconds(90)
+    $lastResult = $taskRunning
+    while ((Get-Date) -lt $deadline) {
+        $written = Get-Item -LiteralPath $snapshotPath -ErrorAction SilentlyContinue
+        if ($written -and $written.LastWriteTime -ge $startedAt) { break }
+        $lastResult = (Get-ScheduledTask -TaskName $taskName -TaskPath '\' | Get-ScheduledTaskInfo).LastTaskResult
+        if ($lastResult -ne $taskRunning -and $lastResult -ne 0) { break }
         Start-Sleep -Milliseconds 500
     }
-    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
-        $taskInfo = Get-ScheduledTask -TaskName $taskName -TaskPath '\' | Get-ScheduledTaskInfo
-        throw "Sensor helper started but wrote no snapshot within 15s (last task result $($taskInfo.LastTaskResult))."
+    # A helper that starts and never writes is worth reporting, but it is not a
+    # reason to tear down a correct installation: the logon trigger starts it
+    # again at the next sign-in, and only the immediate start is in doubt here.
+    $written = Get-Item -LiteralPath $snapshotPath -ErrorAction SilentlyContinue
+    if (-not $written -or $written.LastWriteTime -lt $startedAt) {
+        if ($lastResult -ne $taskRunning -and $lastResult -ne 0) {
+            $snapshotWarning = "Sensor helper exited without writing a snapshot (task result $lastResult). Sensors stay unavailable until this is fixed."
+        }
+        else {
+            $snapshotWarning = 'Sensor helper is running but wrote no snapshot within 90s. Sign out and back in to let the logon trigger start it again; sensors stay unavailable until it writes one.'
+        }
     }
+    # A stale diagnostics file from an earlier failure would misdescribe this
+    # installation.
+    $staleError = Join-Path $dataRoot ('setup-error-' + $sid.Value + '.txt')
+    if (Test-Path -LiteralPath $staleError -PathType Leaf) { Remove-Item -LiteralPath $staleError -Force }
 } catch {
     $installError = $_
     if ($createdTask) {

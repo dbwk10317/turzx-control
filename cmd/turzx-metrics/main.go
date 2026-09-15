@@ -34,9 +34,6 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	cpuTemperatureSensor := flags.String("cpu-temperature-sensor", "", "helper sensor id for CPU temperature")
 	gpuUsageSensor := flags.String("gpu-usage-sensor", "", "helper sensor id for GPU usage")
 	gpuTemperatureSensor := flags.String("gpu-temperature-sensor", "", "helper sensor id for GPU temperature")
-	ramTemperatureSensor := flags.String("ram-temperature-sensor", "", "helper sensor id for RAM temperature")
-	motherboardTemperatureSensor := flags.String("motherboard-temperature-sensor", "", "helper motherboard sensor id used when RAM fallback is enabled")
-	ramTemperatureUnsupported := flags.Bool("ram-temperature-unsupported", false, "disable RAM temperature and attempt fallback only when motherboard sensor is configured")
 	count := flags.Int("samples", 5, "number of one-second hardware samples; 0 runs until interrupted")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -46,15 +43,9 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	}
 
 	selection := metric.HardwareSensorSelection{
-		CPUTemperatureSensor:         *cpuTemperatureSensor,
-		GPUUsageSensor:               *gpuUsageSensor,
-		GPUTemperatureSensor:         *gpuTemperatureSensor,
-		RAMTemperatureSensor:         *ramTemperatureSensor,
-		MotherboardTemperatureSensor: *motherboardTemperatureSensor,
-		RAMTemperatureUnsupported:    *ramTemperatureUnsupported,
-	}
-	if err := selection.Validate(); err != nil {
-		return err
+		CPUTemperatureSensor: *cpuTemperatureSensor,
+		GPUUsageSensor:       *gpuUsageSensor,
+		GPUTemperatureSensor: *gpuTemperatureSensor,
 	}
 
 	encoder := json.NewEncoder(output)

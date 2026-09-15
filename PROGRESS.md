@@ -7,7 +7,7 @@
 
 - 첫 설정 UI에 센서·표시 설정이 없다. 현재 설정 UI는 `/api/state`와 Codex·Claude
   로그인/로그아웃뿐이고, 센서 선택·테마 선택·설치 실행은 전부 CLI 플래그와
-  `settings.json` 직접 편집이다. 필요한 것: helper snapshot에서 CPU·GPU·RAM 온도
+  `settings.json` 직접 편집이다. 필요한 것: helper snapshot에서 CPU·GPU 온도
   후보 제시와 선택 저장, 센서 활성화 시 `setup-sensor-task.ps1` 실행과 결과 표시
   (취소·실패·재부팅 필요 구분), 설치 루트 입력, 자동 시작 토글. 결정이 필요한
   것: 앱이 설치 스크립트를 직접 실행해 UAC를 띄울지, UI가 명령줄을 제시하고

@@ -4,45 +4,28 @@
 package metric
 
 import (
-	"errors"
 	"strings"
 	"time"
 )
 
 // HardwareSensorSelection maps explicitly selected sensor IDs to output IDs.
+// There is deliberately no RAM temperature here: reading DIMM thermal sensors
+// means driving the SMBus from ring 0, which hung the helper and the machine,
+// so the panel shows memory usage only. Usage comes from the OS, not the helper.
 type HardwareSensorSelection struct {
-	CPUTemperatureSensor         string `json:"cpu-temperature-sensor"`
-	GPUUsageSensor               string `json:"gpu-usage-sensor"`
-	GPUTemperatureSensor         string `json:"gpu-temperature-sensor"`
-	RAMTemperatureSensor         string `json:"ram-temperature-sensor"`
-	MotherboardTemperatureSensor string `json:"motherboard-temperature-sensor"`
-	RAMTemperatureUnsupported    bool   `json:"ram-temperature-unsupported"`
-}
-
-func (s HardwareSensorSelection) Validate() error {
-	if s.RAMTemperatureSensor != "" && s.RAMTemperatureUnsupported {
-		return errors.New("cannot select RAM temperature and mark it unsupported")
-	}
-	if s.MotherboardTemperatureSensor != "" && !s.RAMTemperatureUnsupported {
-		return errors.New("motherboard temperature requires confirmed unsupported RAM temperature")
-	}
-	return nil
+	CPUTemperatureSensor string `json:"cpu-temperature-sensor"`
+	GPUUsageSensor       string `json:"gpu-usage-sensor"`
+	GPUTemperatureSensor string `json:"gpu-temperature-sensor"`
 }
 
 // Readings never reuses past values or infers lack of support from a read error.
 func (s HardwareSensorSelection) Readings(snapshot HelperSnapshot, snapshotErr error, receivedAt time.Time) []Reading {
-	ramID, ramLabel := s.RAMTemperatureSensor, "RAM 온도"
-	if s.RAMTemperatureUnsupported {
-		ramID, ramLabel = s.MotherboardTemperatureSensor, "메인보드 온도"
-	}
 	// hardware is a required LibreHardwareMonitor HardwareType prefix; it keeps
-	// an ACPI thermal zone or VRM sensor from being routed as CPU or GPU. The
-	// RAM route stays open because its fallback is a user-identified board sensor.
+	// an ACPI thermal zone or VRM sensor from being routed as CPU or GPU.
 	routes := []struct{ id, sensorID, kind, label, hardware string }{
 		{"cpu.temperature", s.CPUTemperatureSensor, "Temperature", "CPU 온도", "Cpu"},
 		{"gpu.usage", s.GPUUsageSensor, "Load", "GPU 사용률", "Gpu"},
 		{"gpu.temperature", s.GPUTemperatureSensor, "Temperature", "GPU 온도", "Gpu"},
-		{"ram.temperature", ramID, "Temperature", ramLabel, ""},
 	}
 	readings := make([]Reading, 0, len(routes))
 	for _, route := range routes {
@@ -51,15 +34,13 @@ func (s HardwareSensorSelection) Readings(snapshot HelperSnapshot, snapshotErr e
 		if route.kind == "Load" {
 			r.Unit = "%"
 		}
-		if route.id == "ram.temperature" && s.RAMTemperatureUnsupported && ramID == "" {
-			r.State, r.Label = "unsupported", "RAM 온도"
-		} else if route.sensorID != "" {
+		if route.sensorID != "" {
 			r.State = "error"
 			switch {
 			case snapshotErr != nil:
 				r.Error = snapshotErr.Error()
-			case (route.id == "cpu.temperature" || route.id == "ram.temperature") && (!snapshot.DriverInstalled || !snapshot.Elevated):
-				r.Error = "CPU/motherboard/RAM sensors require PawnIO and elevated helper access"
+			case route.id == "cpu.temperature" && (!snapshot.DriverInstalled || !snapshot.Elevated):
+				r.Error = "CPU sensors require PawnIO and elevated helper access"
 				if len(snapshot.Errors) != 0 {
 					r.Error += ": " + strings.Join(snapshot.Errors, "; ")
 				}
@@ -94,9 +75,7 @@ func (s HardwareSensorSelection) Readings(snapshot HelperSnapshot, snapshotErr e
 				default:
 					value := *sensor.Value
 					r.Value, r.State, r.ReceivedAt = &value, "ok", &receivedAt
-					if !(route.id == "ram.temperature" && s.RAMTemperatureUnsupported) {
-						r.Label = sensor.Name
-					}
+					r.Label = sensor.Name
 				}
 			}
 		}

@@ -153,14 +153,11 @@ func hardwareDashboard(snapshot metric.HardwareSnapshot) HardwareDashboard {
 			readings[r.ID] = r
 		}
 	}
-	return HardwareDashboard{CPU: hardwareMetric("CPU", readings["cpu.usage"], readings["cpu.temperature"]), GPU: hardwareMetric("GPU", readings["gpu.usage"], readings["gpu.temperature"]), RAM: hardwareMetric(ramLabel(readings["ram.temperature"]), readings["ram.usage"], readings["ram.temperature"])}
-}
-
-func ramLabel(r metric.Reading) string {
-	if r.Label == "메인보드 온도" {
-		return "RAM · 메인보드"
-	}
-	return "RAM"
+	// Memory has no temperature: an empty string draws nothing, which is the
+	// point, whereas the "—" placeholder would advertise a reading we removed.
+	ram := hardwareMetric("RAM", readings["ram.usage"], metric.Reading{})
+	ram.Temperature = ""
+	return HardwareDashboard{CPU: hardwareMetric("CPU", readings["cpu.usage"], readings["cpu.temperature"]), GPU: hardwareMetric("GPU", readings["gpu.usage"], readings["gpu.temperature"]), RAM: ram}
 }
 
 func hardwareMetric(label string, usageReading, temp metric.Reading) Metric {
