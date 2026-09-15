@@ -107,14 +107,6 @@ func ParseStatusline(data []byte) (Statusline, error) {
 	return result, nil
 }
 
-func ParseStatuslineReader(r io.Reader) (Statusline, error) {
-	b, err := io.ReadAll(io.LimitReader(r, MaxJSONSize+1))
-	if err != nil {
-		return Statusline{}, err
-	}
-	return ParseStatusline(b)
-}
-
 func parseWindow(raw *rawWindow) (*Window, error) {
 	if raw == nil {
 		return nil, nil

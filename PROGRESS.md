@@ -16,10 +16,10 @@
   기본값이 없어서다. 실행 파일 옆의 테마·FFmpeg를 기본값으로 잡거나 첫 설정
   UI가 받게 한다. ZIP의 INSTALL.txt는 현재 동작대로 첫 실행 명령을 적어 두었다.
 - Claude 사용량은 이제 사용자의 실제 프로필에 hook을 설치해 별도 조작 없이
-  들어온다. 남은 확인: 실제 Claude Code 세션에서 수신·표시, 그리고 계정을 바꿨을 때
-  자동 재바인딩과 이력 초기화. 조직이 관리 설정에 `allowManagedHooksOnly`를 켜면
-  사용자 statusline이 경고 없이 사라지므로, UI가 "설치됨 · 수신 없음"을 구분해
-  보여줘야 한다.
+  들어온다. 실제 Claude Code 세션에서의 수신·표시와 패널의 계정 주소 표기는
+  확인했다. 남은 확인: 계정을 바꿨을 때 자동 재바인딩과 이력 초기화. 조직이 관리
+  설정에 `allowManagedHooksOnly`를 켜면 사용자 statusline이 경고 없이 사라지므로,
+  UI가 "설치됨 · 수신 없음"을 구분해 보여줘야 한다.
 - `turzx-control.exe -autostart enable|disable|status`는 GUI 서브시스템이라 셸이
   종료를 기다리지 않는다. Run 값은 정확히 등록·삭제되지만, 스크립트나 UI에서
   호출할 때는 완료를 기다려야 한다. 첫 설정 UI가 자동 시작을 다룰 때 반영한다.
@@ -74,10 +74,13 @@
 - 개발 도구가 없는 깨끗한 Windows에서 ZIP을 풀어 실행·설치. .NET 미설치 상태의
   helper 동작, UAC 흐름, 표준 사용자 계정 동작, 서명 전이면 SmartScreen 경고가
   여기서 실제로 드러난다.
-- `artifacts/sensors-task-20260914/`는 이전 고정 해시의 입력이라 현재 설치에
-  쓰이지 않는다. `-owner` publish로 대체됐으므로 정리해도 된다.
-  `artifacts/dev-claude-connect-20260911/`(기존 Claude 훅 어댑터)는 재연결 검증
-  전까지 보존한다.
+- `artifacts/`에는 지워서는 안 되는 것만 남겼다. `sensors-memoff-20260915`는 현재
+  설치본이고 고정 해시가 이것을 가리킨다. `ffmpeg-win-x64-20260914`는 GPL
+  corresponding source 기록(`configure.txt`·두 커밋·라이선스 전문)이다.
+  `azure-ribbon`은 배포되는 기본 테마를 만든 `render.py`·`verify.py`를 담고 있어
+  저장소에 추적되는 산출물의 유일한 생성 경로다. `theme-experiments`는 개인 테마
+  원본 PNG의 유일한 사본이다. `dev-claude-connect-20260911`(기존 Claude 훅 어댑터)은
+  재연결 검증 전까지 보존한다. 나머지 실험·검증 산출물은 2026-09-15에 정리했다.
 - `internal/claude`의 `TestConcurrentWriters`가 이 PC에서 자주 실패한다. 8개 writer가
   250ms 락 타임아웃을 두고 경합하는 합성 테스트인데, 파일 조작마다 개입하는 안티바이러스
   때문에 250ms가 빠듯하다. 2026-09-15에 이번 세션 이전 코드(`02d15ff`)로 되돌려 같은
