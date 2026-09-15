@@ -23,6 +23,11 @@ func TestParseStatuslineAndBounds(t *testing.T) {
 	if _, err := ParseStatusline(append([]byte(sample), 'x')); err == nil {
 		t.Fatal("trailing JSON accepted")
 	}
+	// A shell in the statusline chain can prepend a BOM; ingestion must not
+	// fail silently on it.
+	if _, err := ParseStatusline(append([]byte{0xEF, 0xBB, 0xBF}, sample...)); err != nil {
+		t.Fatalf("leading BOM rejected: %v", err)
+	}
 	bad := `{"session_id":"s","rate_limits":{"five_hour":{"used_percentage":-1,"resets_at":1}}}`
 	if _, err := ParseStatusline([]byte(bad)); err == nil {
 		t.Fatal("out of range accepted")

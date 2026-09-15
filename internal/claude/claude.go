@@ -78,6 +78,10 @@ func ParseStatusline(data []byte) (Statusline, error) {
 	if len(data) == 0 || len(data) > MaxJSONSize {
 		return Statusline{}, errors.New("invalid statusline size")
 	}
+	// A shell in the statusline chain can prepend a UTF-8 BOM. Rejecting it
+	// would fail ingestion silently, because the statusline command's stderr
+	// goes nowhere.
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	var raw rawStatusline
