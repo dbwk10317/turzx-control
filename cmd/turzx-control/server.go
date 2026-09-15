@@ -9,10 +9,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +44,7 @@ type claudeLoginStarter func(context.Context, string, string) (claudeLoginSessio
 type claudeStatusInstaller func(string, string, string, string) error
 type profileLogout func(context.Context, string, string) error
 type claudeStatusUninstaller func(string) error
-type claudeAccountStatus func(context.Context, string, string) (claude.Account, error)
+type claudeAccountStatus func(context.Context, string) (claude.Account, error)
 
 type app struct {
 	ctx             context.Context
@@ -284,11 +287,14 @@ func (a *app) startClaudeLogin(w http.ResponseWriter) {
 	// The hook targets the profile the user already runs Claude Code with, so a
 	// profile that is signed in needs no login at all.
 	statusCtx, cancelStatus := context.WithTimeout(a.ctx, profileStatusTimeout)
-	account, statusErr := a.statusClaude(statusCtx, a.claudeBin, a.claudeConfigDir)
+	account, statusErr := a.statusClaude(statusCtx, a.claudeBin)
 	cancelStatus()
+	if statusErr == nil && !sameProfile(account.ConfigDirectory, a.claudeConfigDir) {
+		statusErr = fmt.Errorf("Claude Code uses %q, not the configured %q", account.ConfigDirectory, a.claudeConfigDir)
+	}
 	if statusErr != nil {
 		log.Printf("Claude auth status failed: %v", statusErr)
-		a.setClaudeState("error", "Claude 로그인 상태를 확인하지 못했습니다. 실행 파일 경로를 확인하세요.")
+		a.setClaudeState("error", "Claude 로그인 상태를 확인하지 못했습니다. 실행 파일과 프로필 경로를 확인하세요.")
 		http.Error(w, "claude status unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -401,7 +407,7 @@ func (a *app) waitForClaudeLogin(session claudeLoginSession, binding string) {
 		a.setClaudeState("error", "로그인이 완료되지 않았습니다. 다시 연결해 주세요.")
 		return
 	}
-	account, err := a.statusClaude(ctx, a.claudeBin, a.claudeConfigDir)
+	account, err := a.statusClaude(ctx, a.claudeBin)
 	if err == nil {
 		err = a.confirmClaude(a.claudeConfigDir, binding, account)
 	}
@@ -457,4 +463,17 @@ func claudeInstalledMessage(account claude.Account) string {
 		return label + " 계정의 사용량을 수집합니다. 새 Claude Code 세션부터 반영됩니다."
 	}
 	return "Claude 사용량을 수집합니다. 새 Claude Code 세션부터 반영됩니다."
+}
+
+// sameProfile reports whether two profile paths name the same directory.
+func sameProfile(a, b string) bool {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
+		return false
+	}
+	left, leftErr := filepath.Abs(a)
+	right, rightErr := filepath.Abs(b)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 }

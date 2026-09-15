@@ -145,19 +145,20 @@ func (a Account) Label() string {
 	}
 }
 
-// Status reports the account a profile is signed into, using the official CLI.
-func Status(ctx context.Context, executable, configDir string) (Account, error) {
+// Status reports the account the CLI resolves on its own, including which
+// profile the answer describes. CLAUDE_CONFIG_DIR is deliberately left as the
+// user set it: with that variable set explicitly the CLI reports email, orgId
+// and orgName as null even for the very same directory, and the account
+// identity is the whole point of this call. Compare the returned
+// ConfigDirectory against the profile the statusline was installed into.
+func Status(ctx context.Context, executable string) (Account, error) {
 	if ctx == nil {
 		return Account{}, errors.New("nil context")
 	}
 	if strings.TrimSpace(executable) == "" {
 		return Account{}, errors.New("empty Claude executable")
 	}
-	dir, err := absoluteDir(configDir, "config directory")
-	if err != nil {
-		return Account{}, err
-	}
-	return authStatus(ctx, executable, dir)
+	return runAuthStatus(ctx, executable, os.Environ())
 }
 
 func verifyLogin(ctx context.Context, executable, configDir string) error {
@@ -176,10 +177,16 @@ func verifyLoggedOut(ctx context.Context, executable, configDir string) error {
 	return err
 }
 
-// authStatus asks the official CLI which account the profile is signed into.
+// authStatus asks the official CLI about one specific profile. Pointing the CLI
+// at a directory this way makes it omit the account identity, so this is only
+// for the logged-in checks that surround login and logout.
 func authStatus(ctx context.Context, executable, configDir string) (Account, error) {
+	return runAuthStatus(ctx, executable, replaceConfigDir(os.Environ(), configDir))
+}
+
+func runAuthStatus(ctx context.Context, executable string, env []string) (Account, error) {
 	cmd := exec.CommandContext(ctx, executable, "auth", "status", "--json")
-	cmd.Env = replaceConfigDir(os.Environ(), configDir)
+	cmd.Env = env
 	configureProfileProcess(cmd)
 	out, errOut := &HeadBuffer{Max: profileOutputLimit}, &HeadBuffer{Max: profileOutputLimit}
 	cmd.Stdout, cmd.Stderr = out, errOut

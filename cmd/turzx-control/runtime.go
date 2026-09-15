@@ -133,7 +133,7 @@ func (a *app) watchClaudeAccount(ctx context.Context) {
 			continue
 		}
 		checkCtx, cancel := context.WithTimeout(ctx, profileStatusTimeout)
-		account, err := a.statusClaude(checkCtx, a.claudeBin, a.claudeConfigDir)
+		account, err := a.statusClaude(checkCtx, a.claudeBin)
 		cancel()
 		if err != nil {
 			log.Printf("Claude account check: %v", err)

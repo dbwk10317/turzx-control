@@ -104,7 +104,9 @@ func TestClaudeLoginInstallsStatuslineAndRequiresOriginAndToken(t *testing.T) {
 	var starts, installs atomic.Int32
 	// The connect flow asks the CLI which account the profile is signed into;
 	// these tests exercise the login path, so report a signed-out profile.
-	a.statusClaude = func(context.Context, string, string) (claude.Account, error) { return claude.Account{}, nil }
+	a.statusClaude = func(context.Context, string) (claude.Account, error) {
+		return claude.Account{ConfigDirectory: temp}, nil
+	}
 	a.confirmClaude = func(string, string, claude.Account) error { return nil }
 	a.startClaude = func(context.Context, string, string) (claudeLoginSession, error) {
 		starts.Add(1)
@@ -236,7 +238,9 @@ func TestClaudeLoginFailureRestoresStatusline(t *testing.T) {
 			var uninstalls atomic.Int32
 			// The connect flow asks the CLI which account the profile is signed into;
 			// these tests exercise the login path, so report a signed-out profile.
-			a.statusClaude = func(context.Context, string, string) (claude.Account, error) { return claude.Account{}, nil }
+			a.statusClaude = func(context.Context, string) (claude.Account, error) {
+				return claude.Account{ConfigDirectory: temp}, nil
+			}
 			a.installClaude = func(string, string, string, string) error { return nil }
 			a.uninstallClaude = func(string) error { uninstalls.Add(1); return nil }
 			a.startClaude = func(context.Context, string, string) (claudeLoginSession, error) {
@@ -270,9 +274,9 @@ func TestClaudeConnectUsesExistingLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account := claude.Account{LoggedIn: true, Email: "user@example.com", OrgID: "org", OrgName: "Example"}
+	account := claude.Account{LoggedIn: true, Email: "user@example.com", OrgID: "org", OrgName: "Example", ConfigDirectory: temp}
 	var confirmed claude.Account
-	a.statusClaude = func(context.Context, string, string) (claude.Account, error) { return account, nil }
+	a.statusClaude = func(context.Context, string) (claude.Account, error) { return account, nil }
 	a.installClaude = func(string, string, string, string) error { return nil }
 	a.confirmClaude = func(_, _ string, got claude.Account) error { confirmed = got; return nil }
 	a.startClaude = func(context.Context, string, string) (claudeLoginSession, error) {
