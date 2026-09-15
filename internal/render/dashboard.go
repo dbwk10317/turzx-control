@@ -64,6 +64,11 @@ func quota(at time.Time, w usage.WindowView) Quota {
 	if (w.Status == usage.OK || w.Status == usage.Stale) && value != nil {
 		q.Value = fmt.Sprintf("%.0f%%", clamp(value.Remaining, 0, 100))
 		q.Fraction = clamp(value.Remaining/100, 0, 1)
+		if w.ReceivedAt == nil {
+			// A value with no reception in this run is the restart baseline.
+			// Saying "수신 기록 없음" beside a number reads as a contradiction.
+			q.Received = "재시작 전 기록"
+		}
 		if !value.ResetsAt.IsZero() {
 			q.Reset = resetText(value.ResetsAt.Sub(at))
 		}

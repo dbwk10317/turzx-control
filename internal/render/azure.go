@@ -60,8 +60,8 @@ func azureDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64, p
 		text(img, false, 1680, 72, fmt.Sprintf("미리보기 데이터 #%06d", counter), 15, muted)
 	}
 	text(img, true, 478, 104, "AI 에이전트", 18, muted)
-	drawProviderLabel(img, 478, 146, "CODEX", d.Codex.Account, 30, 28, azureColumn, cyan, muted)
-	drawProviderLabel(img, 838, 146, "CLAUDE", d.Claude.Account, 30, 28, azureColumn, blue, muted)
+	drawProviderLabel(img, 478, 146, "CODEX", d.Codex.Account, 30, 20, azureColumn, cyan, muted)
+	drawProviderLabel(img, 838, 146, "CLAUDE", d.Claude.Account, 30, 20, azureColumn, blue, muted)
 	drawQuota(img, 478, 186, "5시간", d.Codex.FiveHour.Value, d.Codex.FiveHour.Reset, d.Codex.FiveHour.Received, d.Codex.FiveHour.Fraction, cyan)
 	drawQuota(img, 478, 310, "주간", d.Codex.Weekly.Value, d.Codex.Weekly.Reset, d.Codex.Weekly.Received, d.Codex.Weekly.Fraction, cyan)
 	drawQuota(img, 838, 186, "5시간", d.Claude.FiveHour.Value, d.Claude.FiveHour.Reset, d.Claude.FiveHour.Received, d.Claude.FiveHour.Fraction, blue)
@@ -221,7 +221,7 @@ func drawRounded(img draw.Image, r image.Rectangle, radius int, c color.NRGBA) {
 const (
 	azureColumn     = 344
 	halloweenColumn = 326
-	accountGap      = 14
+	accountGap      = 10
 )
 
 // drawProviderLabel writes the provider name and, beside it, the account whose

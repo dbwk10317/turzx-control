@@ -116,3 +116,20 @@ func TestLiveOverlaysReadCallbackAndPreservePNG(t *testing.T) {
 		t.Fatal("nil halloween callback did not fail")
 	}
 }
+
+// A restart baseline shows a value without a reception in this run. Labelling
+// that "수신 기록 없음" beside a number reads as a contradiction.
+func TestRestartBaselineIsLabelledAsPastRecord(t *testing.T) {
+	view := usage.WindowView{Status: usage.Stale, Previous: &usage.Value{Remaining: 42, ResetsAt: time.Now().Add(time.Hour)}}
+	got := quota(time.Now(), view)
+	if got.Value != "42%" {
+		t.Fatalf("value = %q", got.Value)
+	}
+	if got.Received != "재시작 전 기록" {
+		t.Fatalf("received = %q", got.Received)
+	}
+	none := quota(time.Now(), usage.WindowView{Status: usage.Collecting})
+	if none.Received != "수신 기록 없음" {
+		t.Fatalf("collecting received = %q", none.Received)
+	}
+}
