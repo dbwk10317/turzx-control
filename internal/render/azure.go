@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,10 +60,8 @@ func azureDashboardOverlay(d Dashboard, elapsed time.Duration, counter uint64, p
 		text(img, false, 1680, 72, fmt.Sprintf("미리보기 데이터 #%06d", counter), 15, muted)
 	}
 	text(img, true, 478, 104, "AI 에이전트", 18, muted)
-	text(img, true, 478, 146, "CODEX", 30, cyan)
-	text(img, false, 598, 146, accountText(d.Codex.Account, 22), 14, muted)
-	text(img, true, 838, 146, "CLAUDE", 30, blue)
-	text(img, false, 968, 146, accountText(d.Claude.Account, 22), 14, muted)
+	drawProviderLabel(img, 478, 146, "CODEX", d.Codex.Account, 30, 28, azureColumn, cyan, muted)
+	drawProviderLabel(img, 838, 146, "CLAUDE", d.Claude.Account, 30, 28, azureColumn, blue, muted)
 	drawQuota(img, 478, 186, "5시간", d.Codex.FiveHour.Value, d.Codex.FiveHour.Reset, d.Codex.FiveHour.Received, d.Codex.FiveHour.Fraction, cyan)
 	drawQuota(img, 478, 310, "주간", d.Codex.Weekly.Value, d.Codex.Weekly.Reset, d.Codex.Weekly.Received, d.Codex.Weekly.Fraction, cyan)
 	drawQuota(img, 838, 186, "5시간", d.Claude.FiveHour.Value, d.Claude.FiveHour.Reset, d.Claude.FiveHour.Received, d.Claude.FiveHour.Fraction, blue)
@@ -104,7 +103,46 @@ var (
 	azureFaces    = make(map[string]font.Face)
 )
 
+// textWidth measures a string in pixels so a caller can place the next element
+// after it instead of guessing at a character width.
+func textWidth(bold bool, value string, size float64) int {
+	azureFacesMu.Lock()
+	defer azureFacesMu.Unlock()
+	return font.MeasureString(lockedFace(bold, size), value).Ceil()
+}
+
+// textFit draws value shortened with an ellipsis until it fits maxWidth. The
+// panel's columns are fixed, so a long label is cut rather than allowed to run
+// into the next column.
+func textFit(img draw.Image, bold bool, x, y int, value string, size float64, maxWidth int, c color.Color) {
+	if strings.TrimSpace(value) == "" || maxWidth <= 0 {
+		return
+	}
+	azureFacesMu.Lock()
+	defer azureFacesMu.Unlock()
+	face := lockedFace(bold, size)
+	runes := []rune(value)
+	for font.MeasureString(face, value).Ceil() > maxWidth {
+		if len(runes) <= 1 {
+			return
+		}
+		runes = runes[:len(runes)-1]
+		value = string(runes) + "…"
+	}
+	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face, Dot: fixed.P(x, y)}
+	d.DrawString(value)
+}
+
 func text(img draw.Image, bold bool, x, y int, value string, size float64, c color.Color) {
+	azureFacesMu.Lock()
+	defer azureFacesMu.Unlock()
+	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: lockedFace(bold, size), Dot: fixed.P(x, y)}
+	d.DrawString(value)
+}
+
+// lockedFace returns a cached face. Callers hold azureFacesMu: an opentype face
+// is not safe for concurrent use, so the lock spans measuring and drawing.
+func lockedFace(bold bool, size float64) font.Face {
 	azureFontOnce.Do(func() {
 		// The fonts are compile-time embeds; failing to parse them is a build
 		// defect, not a runtime condition to render around.
@@ -117,7 +155,6 @@ func text(img draw.Image, bold bool, x, y int, value string, size float64, c col
 		}
 	})
 	key := fmt.Sprintf("%t/%.1f", bold, size)
-	azureFacesMu.Lock()
 	face := azureFaces[key]
 	if face == nil {
 		parsed := azureRegular
@@ -130,9 +167,7 @@ func text(img draw.Image, bold bool, x, y int, value string, size float64, c col
 		}
 		azureFaces[key] = face
 	}
-	defer azureFacesMu.Unlock()
-	d := font.Drawer{Dst: img, Src: image.NewUniform(c), Face: face, Dot: fixed.P(x, y)}
-	d.DrawString(value)
+	return face
 }
 
 func drawQuota(img draw.Image, x, y int, period, value, reset, received string, fraction float64, accent color.NRGBA) {
@@ -180,4 +215,30 @@ func drawRounded(img draw.Image, r image.Rectangle, radius int, c color.NRGBA) {
 			}
 		}
 	}
+}
+
+// Column widths of the AI section; the usage rails below the labels span these.
+const (
+	azureColumn     = 344
+	halloweenColumn = 326
+	accountGap      = 14
+)
+
+// drawProviderLabel writes the provider name and, beside it, the account whose
+// usage the column shows, so two providers on screen are never confused. The
+// account is measured against the remaining column width and cut when it does
+// not fit.
+func drawProviderLabel(img draw.Image, x, y int, name, account string, nameSize, accountSize float64, column int, accent, muted color.Color) {
+	text(img, true, x, y, name, nameSize, accent)
+	accountX := x + textWidth(true, name, nameSize) + accountGap
+	width := x + column - accountX
+	// A full address rarely fits beside the name at this size. The part before
+	// the @ still identifies the account and stays readable, so it is preferred
+	// over cutting the address mid-domain.
+	if account != "" && textWidth(false, account, accountSize) > width {
+		if local, _, ok := strings.Cut(account, "@"); ok && local != "" {
+			account = local
+		}
+	}
+	textFit(img, false, accountX, y, account, accountSize, width, muted)
 }

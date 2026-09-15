@@ -178,17 +178,3 @@ func hardwareMetric(label string, usageReading, temp metric.Reading) Metric {
 
 func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }
 func finite(v float64) bool           { return !math.IsNaN(v) && !math.IsInf(v, 0) }
-
-// accountText shortens an account label so it cannot run into the next column
-// of the panel. The panel is 462 px tall and the columns are fixed, so a long
-// address is truncated rather than allowed to overlap.
-func accountText(account string, max int) string {
-	runes := []rune(account)
-	if len(runes) <= max {
-		return account
-	}
-	if max <= 1 {
-		return "…"
-	}
-	return string(runes[:max-1]) + "…"
-}
