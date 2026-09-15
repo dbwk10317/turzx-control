@@ -24,7 +24,6 @@ Windows 컨트롤은 `설정 열기`와 `종료` 트레이 메뉴를 제공한�
 
 standalone ZIP, 설치 프로그램, 코드 서명과 최종 배포용 고지는 아직 완료되지 않았다.
 공식 `claude`·`codex` CLI와 사용자 자격 증명은 배포물에 포함하지 않는다.
-남은 구현·검증 항목은 [`PROGRESS.md`](PROGRESS.md)에서 관리한다.
 
 ## Windows 개발 환경
 

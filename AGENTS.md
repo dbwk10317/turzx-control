@@ -45,6 +45,7 @@ GPL-3.0-or-later를 따른다. 새 소스 파일에는 SPDX 헤더와 필요한 
 - 장치 검증은 직렬로 수행하며 실제 장치 응답, 단위 테스트, 실제 패널 표시 확인을 서로 구분한다.
 - 코드 작업에는 `ponytail` 스킬을 필수 적용한다. 현재 환경의 스킬 목록과 실제 경로를 확인하며, 없으면 사용했다고 주장하지 말고 제약을 보고한다. Go 관례가 우선한다.
 - 변경한 Go 파일에 `gofmt`를 적용하고 기본적으로 `go vet ./...`, `go test ./...`, `go build ./...`를 수행한다. 동시성 변경은 지원 환경에서 race 검사를 추가한다. 실행하지 못한 검사는 이유를 보고한다.
+- `internal/claude`의 `TestConcurrentWriters`는 안티바이러스가 끼어드는 PC에서 자주 실패한다. 8개 writer가 250ms 락 타임아웃을 두고 경합하는 합성 테스트이고, 2026-09-15에 이전 코드로 되돌려 같은 실패를 재현해 회귀가 아님을 확인했다. 이 실패를 이유로 제품의 락 타임아웃을 바꾸지 않는다.
 - 목표는 크로스 플랫폼이고 Windows를 우선한다. Windows 전용이라는 이유로 `!windows` 분기나 gopsutil 같은 크로스 플랫폼 의존을 걷어내지 않는다. 플랫폼 분기는 `_windows.go`와 `!windows` 짝으로 두고 한쪽만 고치지 않는다. 변경 후 USB를 쓰지 않는 패키지에 `GOOS=linux`·`GOOS=darwin` vet을 돌린다. USB 패키지는 cgo라 Windows에서 교차 검사할 수 없고, 실제 동작은 각 OS에서 장치를 꽂고 확인해야 한다.
 
 ## 에이전트와 보고
@@ -66,3 +67,5 @@ Windows에서 Go가 PATH에 없으면 `C:\Program Files\Go\bin\go.exe`를 사용
 - MSYS2 UCRT64: `C:\Workspace\tools\msys64` (GCC·`pkg-config`·libusb는 `ucrt64\bin` 아래)
 - FFmpeg: `C:\Workspace\tools\ffmpeg-9.0.1-essentials_build\bin\ffmpeg.exe`
 - Go 검증 전 셸에서 `PATH` 앞에 `ucrt64\bin`을 두고 `CGO_ENABLED=1`, `CC`, `PKG_CONFIG`를 위 경로로 지정한다. 이 설정 없이는 `internal/turzx`·`internal/daemon`·`cmd/turzx-control`·`cmd/turzx-probe`가 빌드되지 않고 `-race`를 쓸 수 없다.
+- `.tools/dotnet/dotnet.exe`는 저장소 안의 포터블 .NET SDK다. 센서 helper는 시스템 설치가 아니라 이것으로 publish한다(`publish-sensors.ps1 -DotnetPath`).
+- `artifacts/`에는 지워서는 안 되는 것만 남아 있다. `sensors-memoff-*`는 현재 설치본이고 `setup-sensor-task.ps1`의 고정 해시가 이것을 가리킨다. `ffmpeg-win-x64-*`는 GPL corresponding source 기록이다. `azure-ribbon`은 배포되는 기본 테마를 만든 `render.py`·`verify.py`로, 추적되는 산출물의 유일한 생성 경로다. `theme-experiments`는 추적하지 않는 개인 테마 원본의 유일한 사본이다. `dev-claude-connect-*`는 재연결 검증용 옛 어댑터다.
