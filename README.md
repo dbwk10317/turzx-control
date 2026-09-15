@@ -235,6 +235,26 @@ Windows에서 MSYS2로 빌드하면 FFmpeg `configure`가 만드는 임시 탐�
 수 있으므로, 그런 환경에서는 WSL이나 다른 머신에서 크로스 빌드하고 산출물만 가져와
 검증한다.
 
+배포물의 실행 파일은 `scripts/sign-artifacts.ps1`로 Authenticode 서명한다. 인증서를
+한 번 만들고, 그 지문으로 서명한다.
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\sign-artifacts.ps1 -CreateSelfSigned
+powershell.exe -NoProfile -File .\scripts\sign-artifacts.ps1 `
+  -Thumbprint <지문> -FFmpegBuildOutput .\artifacts\ffmpeg-win-x64-<date> `
+  -HelperDirectory .\artifacts\sensors-task-<date>
+```
+
+서명은 파일을 바꾸므로 순서가 있다. FFmpeg는 payload가 아니라 빌드 산출물에
+서명하고 `build-ffmpeg.ps1 -FromBuildOutput`을 다시 돌려 재검증 후 payload로
+복사한다. 센서 helper에 서명했으면 `setup-sensor-task.ps1`의 고정 manifest 해시를
+다시 계산해 갱신한다. 두 가지 모두 스크립트가 끝에 알려준다.
+
+자체 서명 인증서는 파일 무결성과 고정된 게시자 신원을 주지만 **공개 신뢰가 아니다.**
+인증서를 실행하는 모든 PC의 신뢰할 수 있는 루트·게시자 저장소에 설치하지 않으면
+SmartScreen과 안티바이러스 휴리스틱은 미서명과 똑같이 취급한다. 공개 신뢰
+인증서로 바꿀 때는 `-Thumbprint`만 바꾸면 된다.
+
 standalone ZIP은 다음으로 만든다. 앱 payload, 센서 helper publish, 설치 스크립트,
 동봉 구성 요소의 라이선스 고지를 한데 모은다.
 

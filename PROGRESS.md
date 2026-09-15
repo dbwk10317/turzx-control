@@ -50,11 +50,12 @@
 
 ## 4. 결정·구매가 필요한 것
 
-- Authenticode 서명. 2026-09-14 빌드 중 Symantec이 FFmpeg `configure`의 임시
-  탐지 실행 파일을 `Heur.AdvML.B`로 격리했다. 서명 없는 갓 만든 exe가 걸리는
-  휴리스틱이며, 우리가 만든 `ffmpeg.exe`·`turzx-control.exe`도 사용자 PC에서 같은
-  일을 겪는다. 서명 대상은 `turzx-control.exe`, `turzx-claude-status.exe`,
-  `turzx-sensors.exe`, 동봉 `ffmpeg.exe`다.
+- Authenticode 서명은 개인 프로젝트라 자체 서명으로 간다. `scripts/sign-artifacts.ps1`로
+  네 실행 파일에 서명하고 타임스탬프까지 넣었다. 자체 서명은 공개 신뢰가 아니라
+  SmartScreen 경고와 휴리스틱 오탐을 없애지 못한다. 남은 결정: 실행할 PC의 신뢰
+  저장소에 인증서를 설치할지(설치하면 그 PC에서는 "알 수 없는 게시자"가 사라진다),
+  인증서 개인 키를 어디에 보관할지. 외부 배포를 하게 되면 공개 신뢰 인증서로
+  바꾸고 `-Thumbprint`만 교체한다.
 - GPL corresponding source 제공 경로. `package-zip.ps1`의 `-SourceOffer`가 아직
   자리표시자다. FFmpeg `bf1b838f2a`와 x264 `b35605ac`의 소스 아카이브를 올릴
   위치를 정해야 한다. `scripts/build-ffmpeg.sh`는 이미 저장소에 있다.

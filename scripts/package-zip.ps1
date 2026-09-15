@@ -205,9 +205,18 @@ finally {
 }
 
 $archive = Get-Item -LiteralPath $OutputPath
+# Report what the payload actually carries rather than assuming. A self-signed
+# certificate reports UnknownError here: the signature is present but its chain
+# is not trusted on this machine.
+$signatures = foreach ($name in @('turzx-control.exe', 'turzx-claude-status.exe', 'ffmpeg.exe')) {
+    Get-AuthenticodeSignature -LiteralPath (Join-Path $AppDirectory $name)
+}
+$unsigned = @($signatures | Where-Object { $_.Status -eq 'NotSigned' }).Count
 [pscustomobject]@{
     Path = $archive.FullName
     SizeMB = [math]::Round($archive.Length / 1MB, 1)
     Sha256 = (Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    Signed = $false
+    Signed = ($unsigned -eq 0)
+    Signer = ($signatures | Where-Object { $_.SignerCertificate } | Select-Object -First 1).SignerCertificate.Subject
+    TrustedHere = @($signatures | Where-Object { $_.Status -eq 'Valid' }).Count -eq $signatures.Count
 } | Format-List

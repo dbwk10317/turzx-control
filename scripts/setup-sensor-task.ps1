@@ -15,10 +15,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# Pinned, locally built development helper (artifacts/sensors-task-20260914-owner).
+# Pinned, locally built and signed development helper
+# (artifacts/sensors-task-20260914-owner). Signing changes the files, so this
+# hash must be recomputed after every signing pass.
 # Update only after reviewing and verifying a new self-contained publish. The
 # installer script itself must come from the trusted source checkout/package.
-$expectedManifestHash = '4506f5ac9081459eb939414f31d453167288395f0ed716f5de8ef8365fbcea3e'
+$expectedManifestHash = '85e5ebdc478761b3ca1678885e4942c6226de64ce82ac1d012e572d0be3c9cba'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
