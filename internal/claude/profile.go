@@ -115,39 +115,82 @@ func (s *LoginSession) Close() {
 	<-s.done
 }
 
+// Account identifies the Claude account a profile is signed into. Claude Code's
+// statusline payload carries no account identity, so asking the official CLI is
+// the only way to notice that the account behind the usage numbers changed.
+type Account struct {
+	LoggedIn         bool   `json:"loggedIn"`
+	Email            string `json:"email"`
+	OrgID            string `json:"orgId"`
+	OrgName          string `json:"orgName"`
+	SubscriptionType string `json:"subscriptionType"`
+	ConfigDirectory  string `json:"configDirectory"`
+}
+
+// SameAccount reports whether both describe the same signed-in account. A
+// logged-out profile never matches, so losing the session ends the generation.
+func (a Account) SameAccount(other Account) bool {
+	return a.LoggedIn && other.LoggedIn && a.Email == other.Email && a.OrgID == other.OrgID
+}
+
+// Label names the account for display without inventing one when the CLI is terse.
+func (a Account) Label() string {
+	switch {
+	case a.Email != "" && a.OrgName != "":
+		return a.Email + " · " + a.OrgName
+	case a.Email != "":
+		return a.Email
+	default:
+		return ""
+	}
+}
+
+// Status reports the account a profile is signed into, using the official CLI.
+func Status(ctx context.Context, executable, configDir string) (Account, error) {
+	if ctx == nil {
+		return Account{}, errors.New("nil context")
+	}
+	if strings.TrimSpace(executable) == "" {
+		return Account{}, errors.New("empty Claude executable")
+	}
+	dir, err := absoluteDir(configDir, "config directory")
+	if err != nil {
+		return Account{}, err
+	}
+	return authStatus(ctx, executable, dir)
+}
+
 func verifyLogin(ctx context.Context, executable, configDir string) error {
-	loggedIn, err := authStatus(ctx, executable, configDir)
-	if err == nil && !loggedIn {
+	account, err := authStatus(ctx, executable, configDir)
+	if err == nil && !account.LoggedIn {
 		err = errors.New("Claude auth status: loggedIn is false")
 	}
 	return err
 }
 
 func verifyLoggedOut(ctx context.Context, executable, configDir string) error {
-	loggedIn, err := authStatus(ctx, executable, configDir)
-	if err == nil && loggedIn {
+	account, err := authStatus(ctx, executable, configDir)
+	if err == nil && account.LoggedIn {
 		err = errors.New("Claude auth status: loggedIn is true")
 	}
 	return err
 }
 
-// authStatus asks the official CLI whether the dedicated profile is logged in.
-func authStatus(ctx context.Context, executable, configDir string) (bool, error) {
+// authStatus asks the official CLI which account the profile is signed into.
+func authStatus(ctx context.Context, executable, configDir string) (Account, error) {
 	cmd := exec.CommandContext(ctx, executable, "auth", "status", "--json")
 	cmd.Env = replaceConfigDir(os.Environ(), configDir)
 	configureProfileProcess(cmd)
 	out, errOut := &HeadBuffer{Max: profileOutputLimit}, &HeadBuffer{Max: profileOutputLimit}
 	cmd.Stdout, cmd.Stderr = out, errOut
 	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("Claude auth status: %w", err)
+		return Account{}, fmt.Errorf("Claude auth status: %w", err)
 	}
-	var status struct {
-		LoggedIn bool `json:"loggedIn"`
+	var account Account
+	if err := decodeStrict(json.NewDecoder(bytes.NewReader(out.Bytes())), &account); err != nil {
+		return Account{}, fmt.Errorf("Claude auth status JSON: %w", err)
 	}
-	if err := decodeStrict(json.NewDecoder(bytes.NewReader(out.Bytes())), &status); err != nil {
-		return false, fmt.Errorf("Claude auth status JSON: %w", err)
-	}
-	return status.LoggedIn, nil
+	return account, nil
 }
 
 // Logout revokes the dedicated Claude profile and verifies it is logged out.
@@ -223,6 +266,10 @@ type managedStatusline struct {
 	BindingID          string          `json:"binding_id,omitempty"`
 	InboxDir           string          `json:"inbox_dir,omitempty"`
 	Confirmed          bool            `json:"confirmed,omitempty"`
+	// Account the binding was issued for, so a restart can tell whether the
+	// profile has since been signed into a different one.
+	AccountEmail string `json:"account_email,omitempty"`
+	AccountOrgID string `json:"account_org_id,omitempty"`
 }
 
 // InstallStatusline installs the dedicated adapter command while preserving settings.

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/dbwk10317/turzx-control/internal/claude"
 	"github.com/dbwk10317/turzx-control/internal/daemon"
@@ -24,10 +25,17 @@ func (a *app) startRuntime(ctx context.Context, display *displaySettings) func()
 		log.Printf("restore Claude binding: %v", err)
 		a.setClaudeState("error", "저장된 Claude 연결을 확인하지 못했습니다. 다시 연결해 주세요.")
 	} else if binding != "" {
+		account, accountErr := claude.InstalledAccount(a.claudeConfigDir)
+		if accountErr != nil {
+			log.Printf("restore Claude account: %v", accountErr)
+		}
+		a.setClaudeAccount(account)
 		a.sources.SetClaude(binding)
-		a.setClaudeState("installed", "수동 확인한 Claude 계정입니다. 새 statusline 수신 전에는 과거 값으로 표시합니다.")
+		a.setClaudeState("installed", claudeInstalledMessage(account))
+		go a.watchClaudeAccount(ctx)
 	} else {
-		a.setClaudeState("disconnected", "Claude를 연결하면 확인된 계정의 새 세션 사용량을 표시합니다. 이전 버전 연결은 다시 확인해 주세요.")
+		a.setClaudeState("disconnected", "Claude를 연결하면 지금 로그인한 계정의 사용량을 수집합니다.")
+		go a.watchClaudeAccount(ctx)
 	}
 	a.sources.SetCodex(true)
 	done := make(chan error, 1)
@@ -95,4 +103,65 @@ func (a *app) dashboard() *render.Dashboard {
 	}
 	value := a.sources.Dashboard()
 	return &value
+}
+
+const (
+	profileStatusTimeout = 15 * time.Second
+	claudeAccountPeriod  = 30 * time.Second
+)
+
+// watchClaudeAccount re-binds when the profile is signed into a different
+// account. Claude Code's statusline payload carries no account identity, so
+// asking the CLI is the only way to stop one account's usage and reset history
+// from landing under another account's binding.
+func (a *app) watchClaudeAccount(ctx context.Context) {
+	ticker := time.NewTicker(claudeAccountPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		previous := a.currentClaudeAccount()
+		if previous.Email == "" {
+			// Nothing is bound; connecting is the user's decision, so a fresh
+			// login must not install a hook on its own.
+			continue
+		}
+		if a.claudeBusy() {
+			continue
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, profileStatusTimeout)
+		account, err := a.statusClaude(checkCtx, a.claudeBin, a.claudeConfigDir)
+		cancel()
+		if err != nil {
+			log.Printf("Claude account check: %v", err)
+			continue
+		}
+		if previous.SameAccount(account) {
+			continue
+		}
+		if err := a.stopProvider("claude"); err != nil {
+			log.Printf("drop Claude binding after account change: %v", err)
+		}
+		a.setClaudeAccount(claude.Account{})
+		if !account.LoggedIn {
+			a.setClaudeState("disconnected", "Claude Code에서 로그아웃되었습니다. 다시 로그인한 뒤 연결해 주세요.")
+			continue
+		}
+		if err := a.bindClaude(account); err != nil {
+			log.Printf("rebind Claude after account change: %v", err)
+			a.setClaudeState("error", "계정이 바뀌었지만 statusline을 다시 설치하지 못했습니다. 다시 연결해 주세요.")
+			continue
+		}
+		a.setClaudeState("installed", "계정이 바뀌어 이전 사용량과 리셋 이력을 지웠습니다. "+claudeInstalledMessage(account))
+	}
+}
+
+// claudeBusy reports whether a connect or disconnect is in flight.
+func (a *app) claudeBusy() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.claudeStatus == "starting" || a.claudeStatus == "waiting" || a.claudeStatus == "disconnecting" || a.stopping
 }

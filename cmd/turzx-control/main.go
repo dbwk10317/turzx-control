@@ -38,7 +38,7 @@ func run(ctx context.Context, args []string) (runErr error) {
 	codexBin := flags.String("codex-bin", "codex", "path to the Codex CLI executable")
 	codexHome := flags.String("codex-home", "", "dedicated CODEX_HOME managed by turzx-control")
 	claudeBin := flags.String("claude-bin", "claude", "path to the Claude Code executable")
-	claudeConfigDir := flags.String("claude-config-dir", "", "dedicated CLAUDE_CONFIG_DIR managed by turzx-control")
+	claudeConfigDir := flags.String("claude-config-dir", "", "Claude Code profile whose statusline reports usage")
 	claudeStatusBin := flags.String("claude-status-bin", "", "path to the turzx-claude-status executable")
 	claudeInboxDir := flags.String("claude-inbox-dir", "", "dedicated Claude statusline inbox directory")
 	saveConfig := flags.Bool("save-config", false, "save noncredential settings before serving")
@@ -67,7 +67,14 @@ func run(ctx context.Context, args []string) (runErr error) {
 		*codexHome = filepath.Join(configDir, "turzx-control", "codex")
 	}
 	if strings.TrimSpace(*claudeConfigDir) == "" {
-		*claudeConfigDir = filepath.Join(configDir, "turzx-control", "claude")
+		// The statusline hook only fires in the profile Claude Code actually
+		// runs with, so it targets the user's own profile. A dedicated profile
+		// would sit idle and report nothing.
+		claudeDir, err := defaultClaudeConfigDir()
+		if err != nil {
+			return err
+		}
+		*claudeConfigDir = claudeDir
 	}
 	if strings.TrimSpace(*claudeInboxDir) == "" {
 		*claudeInboxDir = filepath.Join(configDir, "turzx-control", "inbox", "claude", runtime.GOOS, "default")
@@ -164,4 +171,16 @@ func run(ctx context.Context, args []string) (runErr error) {
 			return err
 		}
 	})
+}
+
+// defaultClaudeConfigDir resolves the profile Claude Code uses by default.
+func defaultClaudeConfigDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find Claude profile: %w", err)
+	}
+	return filepath.Join(home, ".claude"), nil
 }

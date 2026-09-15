@@ -12,7 +12,7 @@ import (
 
 // ConfirmStatusline records that the installed adapter belongs to a successful
 // login after the caller has verified authentication through Claude.
-func ConfirmStatusline(configDir, bindingID string) error {
+func ConfirmStatusline(configDir, bindingID string, account Account) error {
 	dir, err := absoluteDir(configDir, "config directory")
 	if err != nil {
 		return err
@@ -52,6 +52,10 @@ func ConfirmStatusline(configDir, bindingID string) error {
 	}
 
 	side.Confirmed = true
+	// The account is recorded so a restart can tell whether the profile has
+	// since been signed into a different one; the statusline payload itself
+	// carries no account identity.
+	side.AccountEmail, side.AccountOrgID = account.Email, account.OrgID
 	b, err := marshalManagedStatusline(side)
 	if err != nil {
 		return err
@@ -155,4 +159,25 @@ func marshalManagedStatusline(side managedStatusline) ([]byte, error) {
 	}
 	b = append(b, '\n')
 	return b, nil
+}
+
+// InstalledAccount returns the account the confirmed binding was issued for.
+// An empty account means the installation predates account recording, in which
+// case the next observation establishes the baseline.
+func InstalledAccount(configDir string) (Account, error) {
+	dir, err := absoluteDir(configDir, "config directory")
+	if err != nil {
+		return Account{}, err
+	}
+	side, err := readManagedStatuslineFile(filepath.Join(dir, profileSidecar))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Account{}, nil
+		}
+		return Account{}, err
+	}
+	if !side.Confirmed {
+		return Account{}, nil
+	}
+	return Account{LoggedIn: side.AccountEmail != "", Email: side.AccountEmail, OrgID: side.AccountOrgID}, nil
 }

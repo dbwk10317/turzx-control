@@ -41,6 +41,7 @@ type claudeLoginStarter func(context.Context, string, string) (claudeLoginSessio
 type claudeStatusInstaller func(string, string, string, string) error
 type profileLogout func(context.Context, string, string) error
 type claudeStatusUninstaller func(string) error
+type claudeAccountStatus func(context.Context, string, string) (claude.Account, error)
 
 type app struct {
 	ctx             context.Context
@@ -56,14 +57,17 @@ type app struct {
 	startClaude     claudeLoginStarter
 	installClaude   claudeStatusInstaller
 	logoutCodex     profileLogout
-	logoutClaude    profileLogout
 	uninstallClaude claudeStatusUninstaller
-	confirmClaude   func(string, string) error
+	confirmClaude   func(string, string, claude.Account) error
 	forgetClaude    func(string) error
-	sources         *daemon.Sources
-	display         daemon.DisplayState
-	index           *template.Template
-	static          http.Handler
+	statusClaude    claudeAccountStatus
+	// Account the current binding was issued for. The statusline payload has no
+	// account identity, so a change is only visible by asking the CLI.
+	claudeAccount claude.Account
+	sources       *daemon.Sources
+	display       daemon.DisplayState
+	index         *template.Template
+	static        http.Handler
 
 	mu            sync.Mutex
 	workers       sync.WaitGroup
@@ -106,9 +110,10 @@ func newApp(ctx context.Context, host, codexBin, codexHome, claudeBin, claudeCon
 			return claude.StartLogin(ctx, executable, configDir)
 		},
 		installClaude: claude.InstallStatusline,
-		logoutCodex:   codex.Logout, logoutClaude: claude.Logout, uninstallClaude: claude.UninstallStatusline,
+		logoutCodex:   codex.Logout, uninstallClaude: claude.UninstallStatusline,
 		confirmClaude: claude.ConfirmStatusline, forgetClaude: claude.ForgetStatuslineConfirmation,
-		index: index, static: http.FileServer(http.FS(staticFS)), status: "disconnected", claudeStatus: "disconnected",
+		statusClaude: claude.Status,
+		index:        index, static: http.FileServer(http.FS(staticFS)), status: "disconnected", claudeStatus: "disconnected",
 	}, nil
 }
 
@@ -204,14 +209,16 @@ func (a *app) finishLogout(provider string) {
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
 	if provider == "claude" {
-		logoutErr := a.logoutClaude(ctx, a.claudeBin, a.claudeConfigDir)
-		uninstallErr := a.uninstallClaude(a.claudeConfigDir)
-		if err := errors.Join(logoutErr, uninstallErr); err != nil {
+		// The hook lives in the user's own profile, so disconnecting removes the
+		// hook and restores their previous statusline. Signing them out of
+		// Claude Code is not ours to do.
+		if err := a.uninstallClaude(a.claudeConfigDir); err != nil {
 			log.Printf("Claude disconnect failed: %v", err)
 			a.setClaudeState("error", "Claude 연결을 완전히 해제하지 못했습니다. 다시 시도해 주세요.")
 			return
 		}
-		a.setClaudeState("disconnected", "연결이 해제되었습니다. 다른 Claude 계정으로 연결할 수 있습니다.")
+		a.setClaudeAccount(claude.Account{})
+		a.setClaudeState("disconnected", "연결이 해제되었습니다. Claude Code 로그인은 그대로 유지됩니다.")
 		return
 	}
 	if err := a.logoutCodex(ctx, a.codexBin, a.codexHome); err != nil {
@@ -222,6 +229,43 @@ func (a *app) finishLogout(provider string) {
 	a.setState("disconnected", "연결이 해제되었습니다. 다른 Codex 계정으로 연결할 수 있습니다.")
 }
 
+// setClaudeAccount records which account the current binding belongs to.
+func (a *app) setClaudeAccount(account claude.Account) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.claudeAccount = account
+}
+
+func (a *app) currentClaudeAccount() claude.Account {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.claudeAccount
+}
+
+// bindClaude installs a fresh generation of the statusline hook for account and
+// starts accepting its usage. Every connection gets a new binding so values and
+// reset history from a previous account cannot carry over.
+func (a *app) bindClaude(account claude.Account) error {
+	bindingID, err := sessionToken()
+	if err != nil {
+		return err
+	}
+	if err := a.installClaude(a.claudeConfigDir, a.claudeStatusBin, a.claudeInboxDir, bindingID); err != nil {
+		return err
+	}
+	if err := a.confirmClaude(a.claudeConfigDir, bindingID, account); err != nil {
+		if rollbackErr := a.uninstallClaude(a.claudeConfigDir); rollbackErr != nil {
+			log.Printf("Claude statusline rollback failed: %v", rollbackErr)
+		}
+		return err
+	}
+	a.setClaudeAccount(account)
+	if a.sources != nil {
+		a.sources.SetClaude(bindingID)
+	}
+	return nil
+}
+
 func (a *app) startClaudeLogin(w http.ResponseWriter) {
 	a.mu.Lock()
 	if a.claudeStatus == "starting" || a.claudeStatus == "waiting" || a.claudeStatus == "disconnecting" {
@@ -229,12 +273,35 @@ func (a *app) startClaudeLogin(w http.ResponseWriter) {
 		http.Error(w, "login already in progress", http.StatusConflict)
 		return
 	}
-	a.claudeStatus, a.claudeMessage = "starting", "Claude 로그인 준비 중"
+	a.claudeStatus, a.claudeMessage = "starting", "Claude 연결을 준비하고 있습니다."
 	a.mu.Unlock()
 
 	if err := a.stopProvider("claude"); err != nil {
 		a.setClaudeState("error", "이전 연결을 해제하지 못했습니다. 진단 로그를 확인해 주세요.")
 		http.Error(w, "connection state unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	// The hook targets the profile the user already runs Claude Code with, so a
+	// profile that is signed in needs no login at all.
+	statusCtx, cancelStatus := context.WithTimeout(a.ctx, profileStatusTimeout)
+	account, statusErr := a.statusClaude(statusCtx, a.claudeBin, a.claudeConfigDir)
+	cancelStatus()
+	if statusErr != nil {
+		log.Printf("Claude auth status failed: %v", statusErr)
+		a.setClaudeState("error", "Claude 로그인 상태를 확인하지 못했습니다. 실행 파일 경로를 확인하세요.")
+		http.Error(w, "claude status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if account.LoggedIn {
+		if err := a.bindClaude(account); err != nil {
+			log.Printf("Claude statusline install failed: %v", err)
+			a.setClaudeState("error", "statusline 어댑터를 설치하지 못했습니다. 실행 파일과 설정 경로를 확인하세요.")
+			http.Error(w, "statusline unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		a.setClaudeState("installed", claudeInstalledMessage(account))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "installed"})
 		return
 	}
 	bindingID, err := sessionToken()
@@ -334,16 +401,21 @@ func (a *app) waitForClaudeLogin(session claudeLoginSession, binding string) {
 		a.setClaudeState("error", "로그인이 완료되지 않았습니다. 다시 연결해 주세요.")
 		return
 	}
-	if err := a.confirmClaude(a.claudeConfigDir, binding); err != nil {
+	account, err := a.statusClaude(ctx, a.claudeBin, a.claudeConfigDir)
+	if err == nil {
+		err = a.confirmClaude(a.claudeConfigDir, binding, account)
+	}
+	if err != nil {
 		log.Printf("confirm Claude binding: %v", err)
 		a.setClaudeState("error", "Claude 로그인은 완료했지만 연결 확인을 저장하지 못했습니다. 다시 연결해 주세요.")
 		return
 	}
 	closeSession()
+	a.setClaudeAccount(account)
 	if a.sources != nil {
 		a.sources.SetClaude(binding)
 	}
-	a.setClaudeState("installed", "수동 확인한 Claude 계정입니다. 새 Claude Code 세션의 사용량 수신을 기다립니다.")
+	a.setClaudeState("installed", claudeInstalledMessage(account))
 }
 
 func (a *app) setState(status, message string) {
@@ -377,4 +449,12 @@ func sessionToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+// claudeInstalledMessage names the bound account when the CLI reported one.
+func claudeInstalledMessage(account claude.Account) string {
+	if label := account.Label(); label != "" {
+		return label + " 계정의 사용량을 수집합니다. 새 Claude Code 세션부터 반영됩니다."
+	}
+	return "Claude 사용량을 수집합니다. 새 Claude Code 세션부터 반영됩니다."
 }

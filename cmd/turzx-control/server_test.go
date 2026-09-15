@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dbwk10317/turzx-control/internal/claude"
 )
 
 type fakeLogin struct {
@@ -100,7 +102,10 @@ func TestClaudeLoginInstallsStatuslineAndRequiresOriginAndToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	var starts, installs atomic.Int32
-	a.confirmClaude = func(string, string) error { return nil }
+	// The connect flow asks the CLI which account the profile is signed into;
+	// these tests exercise the login path, so report a signed-out profile.
+	a.statusClaude = func(context.Context, string, string) (claude.Account, error) { return claude.Account{}, nil }
+	a.confirmClaude = func(string, string, claude.Account) error { return nil }
 	a.startClaude = func(context.Context, string, string) (claudeLoginSession, error) {
 		starts.Add(1)
 		return &fakeLogin{}, nil
@@ -154,18 +159,11 @@ func TestProviderLogoutUsesDedicatedProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var codexLogouts, claudeLogouts, uninstalls atomic.Int32
+	var codexLogouts, uninstalls atomic.Int32
 	a.logoutCodex = func(_ context.Context, executable, home string) error {
 		codexLogouts.Add(1)
 		if executable != "codex" || home != filepath.Join(temp, "codex") {
 			t.Fatalf("unexpected Codex logout target: %q %q", executable, home)
-		}
-		return nil
-	}
-	a.logoutClaude = func(_ context.Context, executable, home string) error {
-		claudeLogouts.Add(1)
-		if executable != "claude" || home != claudeConfig {
-			t.Fatalf("unexpected Claude logout target: %q %q", executable, home)
 		}
 		return nil
 	}
@@ -190,9 +188,11 @@ func TestProviderLogoutUsesDedicatedProfiles(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(time.Second)
-	for codexLogouts.Load() != 1 || claudeLogouts.Load() != 1 || uninstalls.Load() != 1 {
+	// Disconnecting Claude removes the hook from the user's own profile; it must
+	// never sign them out of Claude Code.
+	for codexLogouts.Load() != 1 || uninstalls.Load() != 1 {
 		if time.Now().After(deadline) {
-			t.Fatalf("codex=%d claude=%d uninstall=%d", codexLogouts.Load(), claudeLogouts.Load(), uninstalls.Load())
+			t.Fatalf("codex=%d uninstall=%d", codexLogouts.Load(), uninstalls.Load())
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -234,6 +234,9 @@ func TestClaudeLoginFailureRestoresStatusline(t *testing.T) {
 				t.Fatal(err)
 			}
 			var uninstalls atomic.Int32
+			// The connect flow asks the CLI which account the profile is signed into;
+			// these tests exercise the login path, so report a signed-out profile.
+			a.statusClaude = func(context.Context, string, string) (claude.Account, error) { return claude.Account{}, nil }
 			a.installClaude = func(string, string, string, string) error { return nil }
 			a.uninstallClaude = func(string) error { uninstalls.Add(1); return nil }
 			a.startClaude = func(context.Context, string, string) (claudeLoginSession, error) {
@@ -254,6 +257,60 @@ func TestClaudeLoginFailureRestoresStatusline(t *testing.T) {
 					t.Fatal("statusline was not restored")
 				}
 				time.Sleep(time.Millisecond)
+			}
+		})
+	}
+}
+
+// The statusline hook lives in the profile the user already runs Claude Code
+// with, so connecting an account that is signed in must not start a login.
+func TestClaudeConnectUsesExistingLogin(t *testing.T) {
+	temp := t.TempDir()
+	a, err := newApp(context.Background(), "127.0.0.1:9123", "codex", temp, "claude", temp, filepath.Join(temp, "adapter"), filepath.Join(temp, "inbox"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := claude.Account{LoggedIn: true, Email: "user@example.com", OrgID: "org", OrgName: "Example"}
+	var confirmed claude.Account
+	a.statusClaude = func(context.Context, string, string) (claude.Account, error) { return account, nil }
+	a.installClaude = func(string, string, string, string) error { return nil }
+	a.confirmClaude = func(_, _ string, got claude.Account) error { confirmed = got; return nil }
+	a.startClaude = func(context.Context, string, string) (claudeLoginSession, error) {
+		t.Error("login started for a profile that is already signed in")
+		return nil, errors.New("unexpected login")
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:9123/api/claude/login", nil)
+	req.Host = a.host
+	req.Header.Set("Origin", "http://"+a.host)
+	req.Header.Set("X-TURZX-Token", a.token)
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("connect status = %d", w.Code)
+	}
+	if confirmed != account {
+		t.Fatalf("binding confirmed for %+v, want %+v", confirmed, account)
+	}
+	if got := a.currentClaudeAccount(); got != account {
+		t.Fatalf("recorded account = %+v, want %+v", got, account)
+	}
+	if a.claudeStatus != "installed" || !strings.Contains(a.claudeMessage, "user@example.com") {
+		t.Fatalf("state = %q %q", a.claudeStatus, a.claudeMessage)
+	}
+}
+
+func TestClaudeAccountComparison(t *testing.T) {
+	bound := claude.Account{LoggedIn: true, Email: "a@example.com", OrgID: "org-1"}
+	for name, other := range map[string]claude.Account{
+		"same account": {LoggedIn: true, Email: "a@example.com", OrgID: "org-1"},
+		"other email":  {LoggedIn: true, Email: "b@example.com", OrgID: "org-1"},
+		"other org":    {LoggedIn: true, Email: "a@example.com", OrgID: "org-2"},
+		"signed out":   {},
+		"same but out": {Email: "a@example.com", OrgID: "org-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := bound.SameAccount(other); got != (name == "same account") {
+				t.Fatalf("SameAccount(%+v) = %v", other, got)
 			}
 		})
 	}

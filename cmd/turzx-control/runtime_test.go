@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dbwk10317/turzx-control/internal/claude"
 	"github.com/dbwk10317/turzx-control/internal/daemon"
 	"github.com/dbwk10317/turzx-control/internal/usage"
 )
@@ -32,8 +33,8 @@ func TestClaudeLogoutStopsCollectionBeforeExternalMutation(t *testing.T) {
 		forgot = true
 		return errors.New("disk unavailable")
 	}
-	a.logoutClaude = func(context.Context, string, string) error {
-		t.Error("logout ran before confirmation invalidation succeeded")
+	a.uninstallClaude = func(string) error {
+		t.Error("statusline removal ran before confirmation invalidation succeeded")
 		return nil
 	}
 	r := httptest.NewRequest(http.MethodPost, "http://"+a.host+"/api/claude/logout", nil)
@@ -52,7 +53,7 @@ func TestClaudeConfirmationFailureDoesNotConnectCollector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.confirmClaude = func(string, string) error { return errors.New("disk unavailable") }
+	a.confirmClaude = func(string, string, claude.Account) error { return errors.New("disk unavailable") }
 	session := &fakeLogin{}
 	a.waitForClaudeLogin(session, "binding")
 	if a.claudeStatus != "error" || !session.closed.Load() {

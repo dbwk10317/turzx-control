@@ -49,7 +49,7 @@ func TestInstalledBindingRequiresConfirmation(t *testing.T) {
 func TestStatuslineBindingConfirmationAndValidation(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		dir, inbox := installBinding(t, "bind")
-		if err := ConfirmStatusline(dir, "bind"); err != nil {
+		if err := ConfirmStatusline(dir, "bind", Account{LoggedIn: true, Email: "user@example.com", OrgID: "org"}); err != nil {
 			t.Fatal(err)
 		}
 		got, err := InstalledBinding(dir, inbox)
@@ -63,7 +63,7 @@ func TestStatuslineBindingConfirmationAndValidation(t *testing.T) {
 
 	t.Run("binding mismatch", func(t *testing.T) {
 		dir, inbox := installBinding(t, "bind")
-		if err := ConfirmStatusline(dir, "other"); err == nil {
+		if err := ConfirmStatusline(dir, "other", Account{LoggedIn: true, Email: "user@example.com", OrgID: "org"}); err == nil {
 			t.Fatal("binding mismatch was accepted")
 		}
 		got, err := InstalledBinding(dir, inbox)
@@ -77,7 +77,7 @@ func TestStatuslineBindingConfirmationAndValidation(t *testing.T) {
 
 	t.Run("command changed", func(t *testing.T) {
 		dir, inbox := installBinding(t, "bind")
-		if err := ConfirmStatusline(dir, "bind"); err != nil {
+		if err := ConfirmStatusline(dir, "bind", Account{LoggedIn: true, Email: "user@example.com", OrgID: "org"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"statusLine":{"type":"command","command":"changed"}}`), 0o600); err != nil {
@@ -94,7 +94,7 @@ func TestStatuslineBindingConfirmationAndValidation(t *testing.T) {
 
 	t.Run("inbox mismatch", func(t *testing.T) {
 		dir, _ := installBinding(t, "bind")
-		if err := ConfirmStatusline(dir, "bind"); err != nil {
+		if err := ConfirmStatusline(dir, "bind", Account{LoggedIn: true, Email: "user@example.com", OrgID: "org"}); err != nil {
 			t.Fatal(err)
 		}
 		got, err := InstalledBinding(dir, filepath.Join(dir, "other-inbox"))
@@ -109,7 +109,7 @@ func TestStatuslineBindingConfirmationAndValidation(t *testing.T) {
 
 func TestForgetStatuslineConfirmation(t *testing.T) {
 	dir, inbox := installBinding(t, "bind")
-	if err := ConfirmStatusline(dir, "bind"); err != nil {
+	if err := ConfirmStatusline(dir, "bind", Account{LoggedIn: true, Email: "user@example.com", OrgID: "org"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ForgetStatuslineConfirmation(dir); err != nil {

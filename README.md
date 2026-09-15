@@ -2,7 +2,7 @@
 
 TURZX Control은 Turing USB 스마트 스크린에 AI 사용량과 하드웨어 상태를 표시하는
 Windows 중심 크로스플랫폼 데몬이다. Windows 데몬이 USB와 센서를 소유하고, 로컬
-컨트롤 UI가 전용 Codex·Claude 프로필의 사용량을 수집한다.
+컨트롤 UI가 전용 Codex 프로필과 사용자의 Claude Code 프로필에서 사용량을 수집한다.
 
 현재 표시 지표는 Codex·Claude의 5시간/주간 잔여량과 각 리셋까지의 시간, CPU·GPU·RAM
 사용률과 온도다. RAM 온도가 지원되지 않으면 식별된 메인보드 온도를 사용하고 출처를
@@ -11,7 +11,7 @@ Windows 중심 크로스플랫폼 데몬이다. Windows 데몬이 USB와 센서�
 ## 현재 범위
 
 - `cmd/turzx-control`: 로컬 설정 UI, Windows 트레이, USB 화면 출력, 공급자 연결 관리
-- `cmd/turzx-claude-status`: Claude statusline 허용 필드를 전용 inbox로 전달
+- `cmd/turzx-claude-status`: Claude statusline 허용 필드를 inbox로 전달하고 기존 statusline을 그대로 호출
 - `cmd/turzx-probe`: USB·PNG·영상 경로를 확인하는 독립 진단 도구
 - `cmd/turzx-metrics`, `cmd/turzx-codex`: USB 없이 센서와 Codex 수집기를 진단하는 CLI
 - `tools/turzx-sensors`: Windows 권한 상승 센서 보조 프로그램
@@ -77,18 +77,31 @@ $ffmpeg = 'C:\tools\ffmpeg\bin\ffmpeg.exe'
 -codex-bin <codex 실행 파일>
 -codex-home <전용 CODEX_HOME>
 -claude-bin <claude 실행 파일>
--claude-config-dir <전용 CLAUDE_CONFIG_DIR>
+-claude-config-dir <statusline을 설치할 Claude Code 프로필>
 -claude-status-bin <turzx-claude-status 실행 파일>
 -claude-inbox-dir <전용 statusline inbox>
 ```
 
 로그인은 설정 UI에서 공식 Codex App Server와 Claude Code 흐름으로 시작한다. 제품 코드는
-인증 파일을 직접 읽지 않는다. Codex는 전용 `CODEX_HOME`의 App Server API를 사용하고,
-Claude는 전용 `CLAUDE_CONFIG_DIR`에서 statusline을 받아 inbox에 기록한다.
+인증 파일을 직접 읽지 않는다. Codex는 전용 `CODEX_HOME`의 App Server API를 사용한다.
 
-Claude statusline sidecar의 확인 정보는 로컬 binding 세대와 명령·inbox 경로의 일치만
-기록한다. 공식 인증 성공 뒤에만 확인하며, 로그아웃 시작 시 확인을 먼저 무효화한다.
-재시작 때 command와 inbox가 바뀌면 이전 계정으로 자동 복원하지 않는다.
+Claude는 **사용자가 실제로 Claude Code를 실행하는 프로필**(`CLAUDE_CONFIG_DIR`가 있으면
+그 경로, 없으면 `~/.claude`)에 statusline hook을 설치해 사용량을 받는다. 한도와 리셋은
+statusline payload로만 오고 hook은 등록된 프로필의 세션에서만 실행되므로, 전용 프로필을
+쓰면 아무도 시작하지 않는 세션을 기다리게 된다. 기존 statusline이 있으면 보존해 그대로
+호출하고 해제 때 복원한다. 이미 로그인된 프로필이면 연결에 로그인 절차가 없다. 연결
+해제는 hook 제거·복원만 하며 **사용자를 Claude Code에서 로그아웃시키지 않는다.**
+
+statusline payload에는 계정 식별자가 없으므로 `claude auth status --json`의 `email`·`orgId`로
+계정을 대조한다. 계정이 바뀌면 새 세대를 발급하고 이전 값과 리셋 이력을 지운 뒤 자동으로
+다시 바인딩한다. 바인딩이 없는 상태에서는 로그인이 확인되어도 hook을 임의로 설치하지 않는다.
+
+Claude statusline sidecar는 binding 세대, 명령·inbox 경로, 그리고 바인딩된 계정을 기록한다.
+공식 인증 성공 뒤에만 확인하며, 로그아웃 시작 시 확인을 먼저 무효화한다. 재시작 때
+command와 inbox가 바뀌면 이전 계정으로 자동 복원하지 않는다.
+
+조직이 관리 설정에 `allowManagedHooksOnly`를 켜면 사용자 statusline이 경고 없이 사라진다.
+이때는 등록에 성공해도 수신이 없으므로, 관리 설정 쪽에 statusline을 두어야 한다.
 
 ## Windows 센서와 최초 UAC
 
