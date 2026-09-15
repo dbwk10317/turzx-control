@@ -72,3 +72,9 @@
   쓰이지 않는다. `-owner` publish로 대체됐으므로 정리해도 된다.
   `artifacts/dev-claude-connect-20260911/`(기존 Claude 훅 어댑터)는 재연결 검증
   전까지 보존한다.
+- `internal/claude`의 `TestConcurrentWriters`가 이 PC에서 자주 실패한다. 8개 writer가
+  250ms 락 타임아웃을 두고 경합하는 합성 테스트인데, 파일 조작마다 개입하는 안티바이러스
+  때문에 250ms가 빠듯하다. 2026-09-15에 이번 세션 이전 코드(`02d15ff`)로 되돌려 같은
+  실패를 재현해 회귀가 아님을 확인했다. 실제로는 세션마다 파일이 분리되고 Claude Code가
+  statusline 실행을 debounce·취소하므로 경합이 거의 없고, 놓친 쓰기는 다음 렌더에서
+  복구된다. 제품 상수를 테스트 때문에 바꾸지 않았다. 다른 PC에서 재현되는지 확인한다.
