@@ -264,7 +264,10 @@ func (a *app) bindClaude(account claude.Account) error {
 	}
 	a.setClaudeAccount(account)
 	if a.sources != nil {
-		a.sources.SetClaudeAccount(account.Label())
+		// The panel gets the address alone: the decorated label carries the
+		// organisation too and would not fit beside the provider name, and a
+		// restart restores only the address, which would then disagree.
+		a.sources.SetClaudeAccount(account.Email)
 		a.sources.SetClaude(bindingID)
 	}
 	return nil
@@ -420,7 +423,7 @@ func (a *app) waitForClaudeLogin(session claudeLoginSession, binding string) {
 	closeSession()
 	a.setClaudeAccount(account)
 	if a.sources != nil {
-		a.sources.SetClaudeAccount(account.Label())
+		a.sources.SetClaudeAccount(account.Email)
 		a.sources.SetClaude(binding)
 	}
 	a.setClaudeState("installed", claudeInstalledMessage(account))

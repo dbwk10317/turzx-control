@@ -30,7 +30,7 @@ func (a *app) startRuntime(ctx context.Context, display *displaySettings) func()
 			log.Printf("restore Claude account: %v", accountErr)
 		}
 		a.setClaudeAccount(account)
-		a.sources.SetClaudeAccount(account.Label())
+		a.sources.SetClaudeAccount(account.Email)
 		a.sources.SetClaude(binding)
 		a.setClaudeState("installed", claudeInstalledMessage(account))
 		go a.watchClaudeAccount(ctx)
