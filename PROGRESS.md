@@ -57,9 +57,15 @@
 - GPL corresponding source 제공 경로. `package-zip.ps1`의 `-SourceOffer`가 아직
   자리표시자다. FFmpeg `bf1b838f2a`와 x264 `b35605ac`의 소스 아카이브를 올릴
   위치를 정해야 한다. `scripts/build-ffmpeg.sh`는 이미 저장소에 있다.
-- `assets/backgrounds/smon-halloween.mp4`는 Git 추적에서 뺐지만 이미 push된
-  이력에는 남아 있다. 지우려면 history rewrite와 force push가 필요하고, 공개
-  저장소였다면 이미 받아간 사본은 되돌릴 수 없다.
+- `assets/backgrounds/smon-halloween.mp4`는 2026-09-15에 `git filter-branch`로 전체
+  이력에서 지우고 force push했다. 새로 clone하면 36개 커밋이 그대로 있고 파일은
+  어디에도 없다(9.1MB). 커밋 해시는 전부 바뀌었으므로 다른 clone이 있으면 다시
+  받아야 한다. **남은 문제**: 저장소가 PUBLIC이고, force push 후에도 옛 커밋
+  `3326eb99`가 GitHub에서 해시로 접근되며 그 커밋의 파일이 그대로 내려받힌다
+  (blob `331fee1c`, 8345644바이트). 참조되지 않는 객체를 실제로 지우려면 GitHub
+  Support에 정리를 요청해야 한다(fork 0개라 요청 조건은 유리하다). 공개 상태였던
+  기간에 이미 받아간 사본은 되돌릴 수 없다. `smon-halloween.theme.json`은 배경
+  영상이 아닌 레이아웃·팔레트 데이터라 그대로 추적한다.
 - macOS·Linux 배포 범위. 현재는 Windows 전용 데몬이다. 실제 배포 계획이 있어야
   빌드·실행·권한·서명 검증의 크기가 정해진다.
 
